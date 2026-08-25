@@ -35,7 +35,7 @@ type Config struct {
 func Load() (Config, error) {
 	c := Config{
 		Port:                env("PORT", "3000"),
-		PetServiceURL:       env("PET_SERVICE_URL", "http://localhost:8081"),
+		PetServiceURL:       env("PET_SERVICE_URL", "http://localhost:4001"),
 		AuthServiceURL:      env("AUTH_SERVICE_URL", "http://localhost:4000"),
 		EventServiceURL:     env("EVENT_SERVICE_URL", "http://localhost:4002"),
 		PublicBaseURL:       env("PUBLIC_BASE_URL", ""),

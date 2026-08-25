@@ -39,7 +39,7 @@ helm/vertex-bff/            chart สำหรับ deploy
 
 ```sh
 PUBLIC_BASE_URL=http://localhost:3000 \
-PET_SERVICE_URL=http://localhost:8081 \
+PET_SERVICE_URL=http://localhost:4001 \
 AUTH_SERVICE_URL=http://localhost:4000 \
 EVENT_SERVICE_URL=http://localhost:4002 \
 ENABLE_INTROSPECTION=true \
@@ -90,7 +90,7 @@ PY
 | ชื่อ | ค่าเริ่มต้น | ใช้ทำอะไร |
 |---|---|---|
 | `PORT` | `3000` | พอร์ตที่ฟัง |
-| `PET_SERVICE_URL` | `http://localhost:8081` | ปลายทาง pet-service |
+| `PET_SERVICE_URL` | `http://localhost:4001` | ปลายทาง pet-service |
 | `AUTH_SERVICE_URL` | `http://localhost:4000` | ปลายทาง auth-service |
 | `EVENT_SERVICE_URL` | `http://localhost:4002` | ปลายทาง event-service |
 | `PUBLIC_BASE_URL` | **ไม่มี — บังคับ** | ที่อยู่สาธารณะ ใช้ประกอบ `avatarUrl` |

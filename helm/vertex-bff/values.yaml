@@ -15,7 +15,7 @@ service:
 # ปลายทางภายในคลัสเตอร์ ไม่ผ่าน ingress
 # ออกไปข้างนอกแล้ววนกลับเข้ามาคือเสียเวลาเปล่าและพังง่ายกว่า
 upstream:
-  petServiceURL: "http://pet-service:8080"
+  petServiceURL: "http://pet-service:4001"
   authServiceURL: "http://auth-service:4000"
   eventServiceURL: "http://event-service:4002"
   timeout: "10s"
