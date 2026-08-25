@@ -1,0 +1,83 @@
+schema:
+  - graphql/schema.graphql
+
+exec:
+  layout: single-file
+  filename: internal/graph/generated.go
+  package: graph
+
+model:
+  filename: internal/graph/model/models_gen.go
+  package: model
+
+resolver:
+  layout: follow-schema
+  dir: internal/graph
+  package: graph
+  filename_template: "{name}.resolvers.go"
+
+# ปิด binding อัตโนมัติ ให้ resolver แปลงจาก REST DTO เป็น model เอง
+# ชัดเจนกว่าและกันไม่ให้ struct ของ REST หลุดออกไปเป็นสัญญาของ GraphQL โดยบังเอิญ
+autobind: []
+
+models:
+  ID:
+    model: github.com/99designs/gqlgen/graphql.ID
+  Int:
+    model:
+      - github.com/99designs/gqlgen/graphql.Int
+      - github.com/99designs/gqlgen/graphql.Int32
+  UUID:
+    model: github.com/99designs/gqlgen/graphql.String
+  DateTime:
+    model: github.com/99designs/gqlgen/graphql.Time
+  JSON:
+    model: github.com/vertex/bff/internal/graph/model.JSON
+
+  # ---------------------------------------------------------------------------
+  # field ที่ต้องมี resolver ของตัวเอง
+  # ---------------------------------------------------------------------------
+  # ถ้าไม่บังคับ gqlgen จะถือว่าเป็น field ธรรมดาบน struct แล้วคาดหวังให้เรา
+  # เติมค่ามาให้ครบตั้งแต่ต้น ซึ่งจะทำให้ query ที่ขอแค่ชื่อแมว
+  # ต้องไปดึง log ทั้งหมดมาด้วย — ตรงข้ามกับเหตุผลที่ทำ GraphQL
+  #
+  # field ที่รับ argument ยิ่งต้องมี resolver เพราะ argument จะหายไปเฉยๆ
+
+  Viewer:
+    fields:
+      pets: { resolver: true }
+      petCount: { resolver: true }
+
+  Pet:
+    fields:
+      ageLabel: { resolver: true }
+      owner: { resolver: true }
+      caregivers: { resolver: true }
+      viewerPermissions: { resolver: true }
+      avatarUrl: { resolver: true }
+      litterLogs: { resolver: true }
+      waterLogs: { resolver: true }
+      litterSummary: { resolver: true }
+      waterSummary: { resolver: true }
+
+  PetCaregiver:
+    fields:
+      user: { resolver: true }
+
+  Event:
+    fields:
+      pet: { resolver: true }
+
+  AdminQuery:
+    fields:
+      users: { resolver: true }
+      pets: { resolver: true }
+      events: { resolver: true }
+      roles: { resolver: true }
+
+  AdminMutation:
+    fields:
+      updateUserRoles: { resolver: true }
+      createMasterDataItem: { resolver: true }
+      updateMasterDataItem: { resolver: true }
+      deactivateMasterDataItem: { resolver: true }
