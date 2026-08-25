@@ -1,0 +1,502 @@
+# =============================================================================
+# Vertex GraphQL schema — VT-98
+# =============================================================================
+# ชั้นเดียวที่พูด GraphQL คือ vertex-bff ส่วน service ข้างในยังพูด REST เหมือนเดิม
+# resolver เรียก REST ของ service ไม่ยิง database ตรง เพื่อให้การตรวจสิทธิ์
+# ยังอยู่ที่ชั้น service ตามที่ pet-service ตั้งใจไว้
+#
+# สิ่งที่ "ไม่อยู่" ใน schema นี้โดยตั้งใจ:
+#   - รูป avatar   ยังเป็น REST เพราะเป็น binary มี ETag + cache อยู่แล้ว
+#                  ที่นี่ให้แค่ avatarUrl กับ hasAvatar
+#   - master data  ยังเป็น REST เพราะมี Cache-Control 60 วินาที ซึ่ง POST ใช้ไม่ได้
+#   - appointment / weight log / medical record / daily task
+#                  ยังไม่มีฝั่ง backend เลย (client เก็บลง SwiftData ในเครื่อง)
+#                  จะใส่เมื่อมี service รองรับจริง ไม่ใส่ไว้ล่วงหน้า
+# =============================================================================
+
+scalar DateTime
+scalar UUID
+scalar JSON
+
+# =============================================================================
+# Query
+# =============================================================================
+
+type Query {
+  "ข้อมูลของผู้ใช้ที่ถือ token นี้"
+  viewer: Viewer!
+
+  "สัตว์เลี้ยงตัวเดียว — คืน null ถ้าไม่มีหรือไม่มีสิทธิ์ดู"
+  pet(id: UUID!): Pet
+
+  """
+  ส่วนของผู้ดูแลระบบ ต้องมี role SUPER_ADMIN
+
+  แยก namespace เพื่อให้เห็นชัดว่าอะไรคือ endpoint ที่ต้องใช้สิทธิ์สูง
+  และเพื่อให้ back office query ก้อนเดียวจบได้โดยไม่ปนกับของผู้ใช้ทั่วไป
+  """
+  admin: AdminQuery
+}
+
+type Viewer {
+  id: UUID!
+  email: String!
+  fullName: String!
+  emailVerified: Boolean!
+  roles: [Role!]!
+
+  "สัตว์เลี้ยงทั้งหมดที่ผู้ใช้คนนี้เข้าถึงได้ (เป็นเจ้าของหรือเป็นผู้ดูแล)"
+  pets: [Pet!]!
+
+  """
+  จำนวนสัตว์เลี้ยง — มีไว้เพื่อหน้า Home โดยเฉพาะ
+
+  หน้า Home ต้องการแค่ตัวเลขนี้กับชื่อ ถ้าไม่มี field นี้จะต้องดึง pets
+  ทั้งก้อนมานับเอง ซึ่งเป็นสาเหตุที่หน้า Home ปัจจุบันโหลดรูปแมวทุกตัว
+  ทั้งที่แสดงแค่ตัวเลขเดียว
+  """
+  petCount: Int!
+}
+
+"""
+ส่วนของผู้ดูแลระบบ
+
+⚠️ ทุก field ในนี้ nullable โดยตั้งใจ — ดูหัวข้อ "partial error" ท้ายไฟล์
+"""
+type AdminQuery {
+  users(first: Int, after: String, search: String): UserConnection
+  pets(first: Int, after: String): PetConnection
+  events(
+    first: Int
+    after: String
+    entityType: String
+    entityId: String
+    actorId: String
+  ): EventConnection
+  roles: [RoleDefinition!]
+}
+
+# =============================================================================
+# Pet
+# =============================================================================
+
+type Pet {
+  id: UUID!
+  name: String!
+  species: String!
+  breed: String!
+  colorCode: String!
+  birthDate: DateTime!
+  gender: String!
+
+  currentWeight: Float
+  microchipId: String
+  isSpayedNeutered: Boolean!
+  bloodType: String
+  allergies: String
+  personality: String
+
+  """
+  อายุแบบอ่านง่าย เช่น "2 ปี 5 เดือน"
+
+  ตอนนี้ client คำนวณเองจาก birthDate ทั้ง iOS และ back office
+  ย้ายมาคำนวณที่เดียวเพื่อให้ทุกที่แสดงตรงกัน
+  """
+  ageLabel: String!
+
+  owner: User!
+
+  "ผู้ดูแลร่วม พร้อมข้อมูล user ที่ resolve ให้แล้ว"
+  caregivers: [PetCaregiver!]!
+
+  """
+  สิทธิ์ของผู้เรียกคนนี้ต่อสัตว์เลี้ยงตัวนี้
+
+  ตอนนี้ iOS คำนวณเองด้วยการเทียบ UUID เป็น string ตัวพิมพ์เล็ก
+  และเขียนซ้ำอยู่สองที่ ซึ่งเป็นตรรกะเรื่องสิทธิ์ที่ไม่ควรอยู่ฝั่ง client
+  """
+  viewerPermissions: PetViewerPermissions!
+
+  hasAvatar: Boolean!
+
+  """
+  URL ของรูป ชี้ไปที่ REST endpoint เดิมที่มี ETag อยู่แล้ว
+
+  ห้ามใส่ตัวรูปเป็น base64 ลงใน GraphQL — ปัจจุบัน GET /pets ส่ง avatarData
+  มาด้วย ทำให้ผู้ใช้ที่มีแมว 3 ตัวโหลดเกือบ 4MB ทุกครั้งที่เปิดหน้ารายการ
+  """
+  avatarUrl: String
+
+  litterLogs(first: Int, after: String, from: DateTime, to: DateTime): LitterLogConnection!
+  waterLogs(first: Int, after: String, from: DateTime, to: DateTime): WaterLogConnection!
+
+  """
+  สรุปรายวันสำหรับหน้า Analytics
+
+  ตอนนี้ client ดึง log ทั้งหมดตั้งแต่ต้นแล้ว group เองในเครื่อง
+  ซึ่งทั้งเปลืองและทำงานไม่ถูกต้อง (ดูหมายเหตุใน VT-98)
+  ให้ฝั่ง server ทำ GROUP BY ให้จบ
+  """
+  litterSummary(from: DateTime!, to: DateTime!): LitterSummary!
+  waterSummary(from: DateTime!, to: DateTime!): WaterSummary!
+
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type PetViewerPermissions {
+  isOwner: Boolean!
+  canEditProfile: Boolean!
+  canManageCaregivers: Boolean!
+  canManageLitter: Boolean!
+  canManageWater: Boolean!
+  canDelete: Boolean!
+}
+
+type PetCaregiver {
+  id: UUID!
+  petId: UUID!
+
+  """
+  ผู้ใช้ที่เป็นผู้ดูแล — resolve ผ่าน dataloader
+
+  แก้ปัญหาที่ทั้ง iOS และ back office ดึงตาราง user ทั้งระบบมาทำ map
+  เพื่อแปลง id เป็นชื่อ ซึ่งทำให้อีเมลของทุกคนหลุดไปอยู่ที่เครื่อง client
+  """
+  user: User!
+
+  permissions: [PetPermission!]!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type PetPermission {
+  id: String!
+  name: String!
+  description: String!
+  isActive: Boolean!
+}
+
+# =============================================================================
+# Log
+# =============================================================================
+
+type LitterLog {
+  id: UUID!
+  petId: UUID!
+  date: DateTime!
+  type: String!
+  amount: Int!
+  createdByUsername: String
+  createdAt: DateTime!
+}
+
+type WaterLog {
+  id: UUID!
+  petId: UUID!
+  date: DateTime!
+  amount: Int!
+  createdByUsername: String
+  createdAt: DateTime!
+}
+
+type LitterSummary {
+  from: DateTime!
+  to: DateTime!
+  totalPoop: Int!
+  totalPee: Int!
+  avgPoopPerDay: Float!
+  avgPeePerDay: Float!
+
+  "ครบทุกวันในช่วง วันที่ไม่มีข้อมูลจะเป็น 0 เพื่อให้กราฟไม่ขาดช่วง"
+  daily: [LitterDailyBucket!]!
+}
+
+type LitterDailyBucket {
+  date: DateTime!
+  poop: Int!
+  pee: Int!
+}
+
+type WaterSummary {
+  from: DateTime!
+  to: DateTime!
+  totalMl: Int!
+  avgMlPerDay: Float!
+
+  """
+  เป้าหมายต่อวันคำนวณจากน้ำหนัก (50 ml ต่อกิโลกรัม)
+
+  null เมื่อสัตว์เลี้ยงยังไม่มีน้ำหนักบันทึกไว้ — client ปัจจุบันเดาเป็น 4 กก.
+  แล้วแสดงเป้าหมายที่ไม่จริง ซึ่งแย่กว่าการบอกว่าไม่รู้
+  """
+  dailyTargetMl: Int
+
+  daily: [WaterDailyBucket!]!
+}
+
+type WaterDailyBucket {
+  date: DateTime!
+  ml: Int!
+}
+
+# =============================================================================
+# User / Role
+# =============================================================================
+
+type User {
+  id: UUID!
+  email: String!
+  fullName: String!
+  emailVerified: Boolean!
+
+  """
+  role ของผู้ใช้คนนี้ — null ถ้าผู้เรียกไม่มีสิทธิ์เห็น
+
+  ผู้ใช้ทั่วไปเห็นได้เฉพาะ role ของตัวเอง ส่วน SUPER_ADMIN เห็นได้ทุกคน
+  ไม่ทำเป็น non-null เพราะจะบังคับให้ต้องเปิดข้อมูลนี้ให้ทุกคน
+  """
+  roles: [Role!]
+}
+
+enum Role {
+  SUPER_ADMIN
+  PET_ADMIN
+  USER
+}
+
+type RoleDefinition {
+  code: Role!
+  name: String!
+  description: String!
+  isSystem: Boolean!
+}
+
+# =============================================================================
+# Event
+# =============================================================================
+
+type Event {
+  id: UUID!
+  timestamp: DateTime!
+  eventType: String!
+  action: String!
+  actorId: String
+  actorUsername: String
+  entityType: String
+  entityId: String
+  payload: JSON
+
+  """
+  สัตว์เลี้ยงที่ event นี้อ้างถึง — resolve ให้เมื่อ entityType = "Pet"
+
+  ทำให้หน้า Event Log ไม่ต้องดึง pets ทั้งหมดมาจับคู่ชื่อเองแบบทุกวันนี้
+  """
+  pet: Pet
+}
+
+# =============================================================================
+# Pagination
+# =============================================================================
+#
+# ทุก list ที่แบ่งหน้าใช้รูปแบบเดียวกันหมด และ cursor เป็นค่าทึบเสมอ
+# client ห้ามตีความหรือสร้าง cursor เอง
+#
+# เบื้องหลังแต่ละอันไม่เหมือนกัน แต่จงใจซ่อนไว้:
+#   log    REST ใช้ keyset บน (date, id) — ส่ง cursor เดิมผ่านไปตรงๆ
+#   event  REST ใช้ offset — resolver เข้ารหัส offset ลงใน cursor
+#   user   REST ยังไม่มีการแบ่งหน้า (ตัดที่ 200 แถวตายตัว) — resolver
+#          แบ่งหน้าในหน่วยความจำไปก่อน และต้องแก้ REST เมื่อ user เกิน 200
+#
+# totalCount เป็น nullable เพราะบาง endpoint ไม่มีให้ (log จงใจไม่นับ
+# เพราะ count ทั้งตารางแพงเกินไป) — null แปลว่า "ไม่รู้" ไม่ใช่ "ศูนย์"
+
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
+type PetConnection {
+  edges: [PetEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int
+}
+type PetEdge {
+  cursor: String!
+  node: Pet!
+}
+
+type UserConnection {
+  edges: [UserEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int
+}
+type UserEdge {
+  cursor: String!
+  node: User!
+}
+
+type EventConnection {
+  edges: [EventEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int
+}
+type EventEdge {
+  cursor: String!
+  node: Event!
+}
+
+type LitterLogConnection {
+  edges: [LitterLogEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int
+}
+type LitterLogEdge {
+  cursor: String!
+  node: LitterLog!
+}
+
+type WaterLogConnection {
+  edges: [WaterLogEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int
+}
+type WaterLogEdge {
+  cursor: String!
+  node: WaterLog!
+}
+
+# =============================================================================
+# Mutation
+# =============================================================================
+#
+# ไม่ใช้รูปแบบ payload + userErrors เพราะจะกลายเป็น boilerplate ใน 15 mutation
+# ให้ข้อผิดพลาดที่คาดไว้ออกมาเป็น GraphQL error พร้อม extensions.code
+# ที่ตรงกับ sentinel error เดิมของ service (PET_NOT_FOUND, FORBIDDEN,
+# VERSION_CONFLICT, VALIDATION, LOG_ID_CONFLICT ฯลฯ)
+# client จึงแยกกรณีได้โดยไม่ต้องอ่านข้อความภาษาไทย
+
+type Mutation {
+  createPet(input: PetInput!): Pet!
+  updatePet(id: UUID!, input: PetInput!): Pet!
+  deletePet(id: UUID!): Boolean!
+
+  addCaregiver(petId: UUID!, userId: UUID!): PetCaregiver!
+  updateCaregiverPermissions(petId: UUID!, caregiverId: UUID!, permissionIds: [String!]!): PetCaregiver!
+  removeCaregiver(petId: UUID!, caregiverId: UUID!): Boolean!
+
+  logLitter(petId: UUID!, input: LitterLogInput!): LitterLog!
+  logLitterBatch(petId: UUID!, inputs: [LitterLogInput!]!): [LitterLog!]!
+  deleteLitterLog(petId: UUID!, logId: UUID!): Boolean!
+
+  logWater(petId: UUID!, input: WaterLogInput!): WaterLog!
+  deleteWaterLog(petId: UUID!, logId: UUID!): Boolean!
+
+  admin: AdminMutation!
+}
+
+type AdminMutation {
+  updateUserRoles(userId: UUID!, roles: [Role!]!): User!
+  createMasterDataItem(type: MasterDataType!, input: MasterDataInput!): MasterDataItem!
+  updateMasterDataItem(type: MasterDataType!, code: String!, input: MasterDataUpdateInput!): MasterDataItem!
+  deactivateMasterDataItem(type: MasterDataType!, code: String!): MasterDataItem!
+}
+
+input PetInput {
+  name: String!
+  species: String!
+  breed: String!
+  colorCode: String!
+  birthDate: DateTime!
+  gender: String!
+  currentWeight: Float
+  microchipId: String
+  isSpayedNeutered: Boolean!
+  bloodType: String
+  allergies: String
+  personality: String
+}
+
+"""
+id ให้ client กำหนดเองได้ตามที่ REST เดิมทำ
+
+เพื่อให้แอปสร้าง log ตอนออฟไลน์แล้วส่งซ้ำได้โดยไม่เกิดรายการซ้ำ
+ส่ง id เดิมของสัตว์เลี้ยงตัวเดิม = idempotent
+ส่ง id ที่เป็นของสัตว์เลี้ยงตัวอื่น = error LOG_ID_CONFLICT
+"""
+input LitterLogInput {
+  id: UUID
+  date: DateTime
+  type: String!
+  amount: Int!
+}
+
+input WaterLogInput {
+  id: UUID
+  date: DateTime
+  amount: Int!
+}
+
+# master data อ่านผ่าน REST (มี HTTP cache) แต่การแก้ไขอยู่ที่นี่
+# เพราะเป็นงานของ back office ที่ต้องใช้สิทธิ์และไม่ได้เรียกบ่อย
+enum MasterDataType {
+  SPECIES
+  CAT_BREEDS
+  BLOOD_TYPES
+  LITTER_TYPES
+  GENDERS
+}
+
+type MasterDataItem {
+  code: String!
+  nameEn: String!
+  nameTh: String
+  label: String!
+  speciesCode: String
+  sortOrder: Int!
+  isActive: Boolean!
+  version: Int!
+  updatedAt: DateTime!
+  updatedBy: String
+}
+
+input MasterDataInput {
+  code: String!
+  nameEn: String!
+  nameTh: String
+  speciesCode: String
+  sortOrder: Int!
+  isActive: Boolean
+}
+
+"""
+version บังคับส่งเสมอ เป็น optimistic locking ของเดิม
+
+ถ้าไม่ตรงกับค่าใน database จะได้ error VERSION_CONFLICT
+กัน admin สองคนแก้ทับกันโดยไม่รู้ตัว
+"""
+input MasterDataUpdateInput {
+  nameEn: String!
+  nameTh: String
+  speciesCode: String
+  sortOrder: Int!
+  isActive: Boolean
+  version: Int!
+}
+
+# =============================================================================
+# partial error — ทำไม field ของ AdminQuery ถึง nullable ทั้งหมด
+# =============================================================================
+#
+# หน้า Dashboard ของ back office ต้องการให้การ์ดที่โหลดสำเร็จแสดงผลได้
+# ส่วนการ์ดที่พังบอกเหตุผลเฉพาะการ์ดนั้น ไม่ใช่ล้มทั้งหน้า
+#
+# ใน GraphQL ถ้า field ที่เป็น non-null (!) resolve ไม่สำเร็จ error จะไหล
+# ขึ้นไปหา parent ที่ nullable ที่ใกล้ที่สุด แล้วทำให้ parent ทั้งก้อนเป็น null
+# ถ้าประกาศ admin.events เป็น non-null แล้ว event-service ล่ม
+# ทั้ง admin จะกลายเป็น null และหน้า Dashboard จะว่างทั้งหน้า
+# ทั้งที่ users กับ pets ดึงมาได้เรียบร้อยแล้ว
+#
+# จึงต้องให้ Query.admin และทุก field ข้างในเป็น nullable
+# client อ่าน data ส่วนที่ได้มา แล้วดู errors[].path ว่าส่วนไหนพัง
+# =============================================================================

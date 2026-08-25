@@ -1,0 +1,7 @@
+FROM golang:alpine
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# For dev, we just run directly
+CMD ["go", "run", "main.go"]

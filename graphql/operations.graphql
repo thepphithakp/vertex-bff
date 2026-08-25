@@ -1,0 +1,368 @@
+# =============================================================================
+# Query ของแต่ละหน้าจอ — ใช้พิสูจน์ว่า schema ตอบโจทย์จริงทั้งสองฝั่ง
+# =============================================================================
+# ทุก operation ต้องมีชื่อ เพราะ BFF จะเอาชื่อไปเขียนลง field `endpoint` ในlog
+# (VT-100) ถ้าไม่มีชื่อจะกรองใน Kibana ไม่ได้ว่า request มาจากหน้าไหน
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# MOBILE
+# -----------------------------------------------------------------------------
+
+# หน้า Home
+#
+# ตอนนี้: GET /pets (พร้อม avatar base64 ทุกตัว) + GET /pets/{id}/avatar อีก N ครั้ง
+#         แล้วใช้จริงแค่ "จำนวน" กับ "ชื่อตัวที่เลือกอยู่"
+#         ผู้ใช้ที่มีแมว 3 ตัวโหลดเกือบ 4MB เพื่อแสดงตัวเลขเดียว
+# หลังย้าย: request เดียว ตอบไม่กี่ไบต์
+query Home {
+  viewer {
+    fullName
+    petCount
+  }
+}
+
+# หน้ารายการแมว
+#
+# ใช้แค่ 4 field ต่อแถว และไม่เอา avatar เป็น base64 อีกแล้ว
+# client เอา avatarUrl ไปโหลดเองผ่าน PetAvatarStore ที่มี ETag cache อยู่แล้ว
+query MyCats {
+  viewer {
+    pets {
+      id
+      name
+      breed
+      ageLabel
+      hasAvatar
+      avatarUrl
+    }
+  }
+}
+
+# หน้าโปรไฟล์แมว — ตัวอย่างของ query "ลึก" ที่ mobile ต้องการ
+#
+# ตอนนี้: bloodType, allergies, personality และ caregivers แสดงบนหน้าจอ
+#         แต่ไม่เคยมีใน PetDTO เลย จึงขึ้น "ไม่ระบุ" ตลอด
+#         และสิทธิ์ว่าแก้ได้ไหมคำนวณเองที่ client ด้วยการเทียบ UUID เป็น string
+# หลังย้าย: ได้ครบในรอบเดียว และสิทธิ์มาจาก server
+query CatProfile($petId: UUID!) {
+  pet(id: $petId) {
+    id
+    name
+    breed
+    gender
+    ageLabel
+    birthDate
+    currentWeight
+    isSpayedNeutered
+    bloodType
+    allergies
+    personality
+    microchipId
+    hasAvatar
+    avatarUrl
+    owner {
+      id
+      fullName
+    }
+    caregivers {
+      id
+      user {
+        id
+        fullName
+        email
+      }
+      permissions {
+        id
+        name
+      }
+    }
+    viewerPermissions {
+      isOwner
+      canEditProfile
+      canManageCaregivers
+      canDelete
+    }
+  }
+}
+
+# หน้าบันทึกน้ำ ของวันเดียว
+#
+# ตอนนี้: GET /pets/{id}/water-logs ดึงประวัติทั้งหมดตั้งแต่ต้น
+#         แล้วกรองเหลือวันเดียวในเครื่อง
+# หลังย้าย: กรองที่ server ด้วย from/to
+query WaterDay($petId: UUID!, $from: DateTime!, $to: DateTime!) {
+  pet(id: $petId) {
+    id
+    name
+    currentWeight
+    waterLogs(from: $from, to: $to, first: 100) {
+      edges {
+        node {
+          id
+          date
+          amount
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+    waterSummary(from: $from, to: $to) {
+      totalMl
+      dailyTargetMl
+    }
+  }
+}
+
+# หน้าบันทึกทราย ของวันเดียว
+query LitterDay($petId: UUID!, $from: DateTime!, $to: DateTime!) {
+  pet(id: $petId) {
+    id
+    name
+    litterLogs(from: $from, to: $to, first: 100) {
+      edges {
+        node {
+          id
+          date
+          type
+          amount
+        }
+      }
+    }
+    litterSummary(from: $from, to: $to) {
+      totalPoop
+      totalPee
+    }
+  }
+}
+
+# หน้า Analytics
+#
+# ตอนนี้: client group ข้อมูลเป็นรายวันเอง และทำงานไม่ถูกต้อง
+#         (ความสัมพันธ์ใน SwiftData ไม่เคยถูกเติม) จนต้องสุ่มข้อมูลปลอมมาแสดง
+# หลังย้าย: server GROUP BY ให้ และเติมวันที่ไม่มีข้อมูลเป็น 0 ให้กราฟไม่ขาดช่วง
+query PetAnalytics($petId: UUID!, $from: DateTime!, $to: DateTime!) {
+  pet(id: $petId) {
+    id
+    name
+    currentWeight
+    litterSummary(from: $from, to: $to) {
+      totalPoop
+      totalPee
+      avgPoopPerDay
+      avgPeePerDay
+      daily {
+        date
+        poop
+        pee
+      }
+    }
+    waterSummary(from: $from, to: $to) {
+      totalMl
+      avgMlPerDay
+      dailyTargetMl
+      daily {
+        date
+        ml
+      }
+    }
+  }
+}
+
+# หน้าจัดการผู้ดูแล
+#
+# ตอนนี้: ดึง GET /auth/users ทั้งตารางมาแปลง id เป็นชื่อ
+#         ทำให้อีเมลของทุกคนในระบบไปอยู่ที่เครื่อง client
+# หลังย้าย: ชื่อ resolve มากับ caregiver เลย ไม่ต้องดึงใคร
+query PetCaregivers($petId: UUID!) {
+  pet(id: $petId) {
+    id
+    name
+    caregivers {
+      id
+      user {
+        id
+        fullName
+        email
+      }
+      permissions {
+        id
+        name
+        description
+      }
+    }
+    viewerPermissions {
+      canManageCaregivers
+    }
+  }
+}
+
+mutation LogWater($petId: UUID!, $input: WaterLogInput!) {
+  logWater(petId: $petId, input: $input) {
+    id
+    date
+    amount
+  }
+}
+
+mutation LogLitterBatch($petId: UUID!, $inputs: [LitterLogInput!]!) {
+  logLitterBatch(petId: $petId, inputs: $inputs) {
+    id
+    date
+    type
+    amount
+  }
+}
+
+# -----------------------------------------------------------------------------
+# BACK OFFICE
+# -----------------------------------------------------------------------------
+
+# หน้า Dashboard
+#
+# ตอนนี้: ยิง 3 เส้นแยกกัน แล้ว catch เดียวกินทั้งหน้า ถ้าเส้นใดพังหน้าเสียหมด
+# หลังย้าย: request เดียว และถ้า service ใดล่ม field นั้นเป็น null
+#           ส่วนที่เหลือยังแสดงได้ (ดูหมายเหตุ partial error ใน schema)
+query AdminDashboard {
+  admin {
+    users(first: 1) {
+      totalCount
+    }
+    pets(first: 1) {
+      totalCount
+    }
+    events(first: 5) {
+      totalCount
+      edges {
+        node {
+          id
+          timestamp
+          eventType
+          action
+          actorUsername
+        }
+      }
+    }
+  }
+}
+
+# ตาราง Pets ของ back office — ตัวอย่างของ query "กว้างแต่ตื้น"
+#
+# ตอนนี้: ดึง users ทั้งตารางมาทำ map เพื่อแสดงชื่อ caregiver ไม่กี่คน
+# หลังย้าย: ชื่อมาพร้อมกันเลย
+query AdminPets($first: Int, $after: String) {
+  admin {
+    pets(first: $first, after: $after) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        node {
+          id
+          name
+          species
+          breed
+          currentWeight
+          hasAvatar
+          avatarUrl
+          owner {
+            id
+            fullName
+          }
+          caregivers {
+            id
+            user {
+              id
+              fullName
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+query AdminUsers($first: Int, $after: String, $search: String) {
+  admin {
+    users(first: $first, after: $after, search: $search) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        node {
+          id
+          email
+          fullName
+          emailVerified
+          roles
+        }
+      }
+    }
+    roles {
+      code
+      name
+      description
+    }
+  }
+}
+
+# หน้า Event Log
+#
+# ตอนนี้: ดึง events แล้วดึง pets ทั้งหมดมาจับคู่ชื่อเอง
+# หลังย้าย: pet resolve มาให้เมื่อ entityType = "Pet"
+query AdminEventLog($first: Int, $after: String, $entityId: String) {
+  admin {
+    events(first: $first, after: $after, entityId: $entityId) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        node {
+          id
+          timestamp
+          eventType
+          action
+          actorUsername
+          entityType
+          entityId
+          payload
+          pet {
+            id
+            name
+          }
+        }
+      }
+    }
+  }
+}
+
+mutation AdminUpdateUserRoles($userId: UUID!, $roles: [Role!]!) {
+  admin {
+    updateUserRoles(userId: $userId, roles: $roles) {
+      id
+      email
+      fullName
+      roles
+    }
+  }
+}
+
+mutation AdminUpdateMasterData($type: MasterDataType!, $code: String!, $input: MasterDataUpdateInput!) {
+  admin {
+    updateMasterDataItem(type: $type, code: $code, input: $input) {
+      code
+      nameEn
+      nameTh
+      isActive
+      version
+    }
+  }
+}

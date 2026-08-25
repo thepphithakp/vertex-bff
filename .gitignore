@@ -1,0 +1,21 @@
+# build output
+/vertex-bff
+/bff
+*.exe
+
+# env — ห้าม commit ค่าจริงของ service URL หรือ token
+.env
+.env.local
+.env.*.local
+
+# kubeconfig ห้ามขึ้น repo เด็ดขาด
+kubeconfig*
+*.kubeconfig
+
+# คีย์
+*.pem
+*.key
+*.crt
+
+# OS
+.DS_Store
