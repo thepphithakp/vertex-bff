@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "vertex-bff.fullname" . }}
+  labels:
+    {{- include "vertex-bff.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "vertex-bff.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "vertex-bff.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "3000"
+            - name: PET_SERVICE_URL
+              value: {{ .Values.upstream.petServiceURL | quote }}
+            - name: AUTH_SERVICE_URL
+              value: {{ .Values.upstream.authServiceURL | quote }}
+            - name: EVENT_SERVICE_URL
+              value: {{ .Values.upstream.eventServiceURL | quote }}
+            - name: UPSTREAM_TIMEOUT
+              value: {{ .Values.upstream.timeout | quote }}
+            - name: PUBLIC_BASE_URL
+              value: {{ required "ต้องส่ง publicBaseURL ตอน deploy ไม่งั้น avatarUrl จะชี้ไปที่อยู่ภายในคลัสเตอร์ที่ client เรียกไม่ถึง" .Values.publicBaseURL | quote }}
+            - name: MAX_QUERY_COMPLEXITY
+              value: {{ .Values.graphql.maxComplexity | quote }}
+            - name: MAX_QUERY_DEPTH
+              value: {{ .Values.graphql.maxDepth | quote }}
+            - name: ENABLE_INTROSPECTION
+              value: {{ .Values.graphql.enableIntrospection | quote }}
+            {{- with .Values.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

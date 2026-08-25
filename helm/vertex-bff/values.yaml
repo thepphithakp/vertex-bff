@@ -1,0 +1,76 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/thepphithakp/vertex-bff
+  pullPolicy: Always
+  tag: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 3000
+
+# ปลายทางภายในคลัสเตอร์ ไม่ผ่าน ingress
+# ออกไปข้างนอกแล้ววนกลับเข้ามาคือเสียเวลาเปล่าและพังง่ายกว่า
+upstream:
+  petServiceURL: "http://pet-service:8080"
+  authServiceURL: "http://auth-service:4000"
+  eventServiceURL: "http://event-service:4002"
+  timeout: "10s"
+
+# publicBaseURL คือที่อยู่ที่ client มองเห็นจากภายนอก ใช้ประกอบ avatarUrl
+#
+# ⚠️ ห้ามใส่ค่าจริงลงไฟล์นี้ — repo เป็น public
+#    ส่งตอน deploy ด้วย --set publicBaseURL=...
+publicBaseURL: ""
+
+graphql:
+  # เพดานความแพงของ query
+  #
+  # rate limit ที่นับจำนวน request ใช้กับ GraphQL แทบไม่ได้ผล
+  # เพราะหนึ่ง request แพงเท่าไหร่ก็ได้ และ endpoint นี้เปิดออกอินเทอร์เน็ต
+  maxComplexity: 1000
+  maxDepth: 12
+  # ปิดบน production ไม่ให้ใครดึง schema ทั้งก้อนไปดู
+  enableIntrospection: false
+
+ingress:
+  enabled: true
+  className: nginx
+  # host ส่งตอน deploy เช่นกัน ห้าม hardcode
+  host: ""
+  path: /graphql
+  pathType: Prefix
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+
+# GraphQL ใช้ CPU น้อยแต่รอ I/O เยอะ ตั้ง limit ให้พอสำหรับ burst
+# ตอน resolve หลาย field พร้อมกัน
+#
+# บทเรียนจาก VT-103: บีบ CPU แน่นเกินไปทำให้ช้าขึ้นสิบเท่าโดยหาสาเหตุยากมาก
+# เพราะดูจากภายนอกเหมือนแค่ช้า ไม่มี error อะไรเลย
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+env: []

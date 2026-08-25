@@ -1,0 +1,32 @@
+{{- if .Values.ingress.enabled }}
+{{/*
+  Ingress แยกจาก vertex-ingress ของเดิมโดยตั้งใจ
+
+  nginx รวม Ingress หลายตัวที่ host เดียวกันให้เอง การมีไฟล์ของตัวเอง
+  จึงปลอดภัยกว่าการไปแก้ ingress ที่ service อื่นใช้ร่วมกันอยู่ —
+  ถ้า apply พลาดจะกระทบแค่ /graphql ไม่ทำให้ทั้งระบบเข้าไม่ถึง
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "vertex-bff.fullname" . }}
+  labels:
+    {{- include "vertex-bff.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - host: {{ required "ต้องส่ง ingress.host ตอน deploy" .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "vertex-bff.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

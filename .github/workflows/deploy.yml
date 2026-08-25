@@ -1,0 +1,132 @@
+name: Build, Push and Deploy to K3s
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Unit test
+        run: go test -race -count=1 ./...
+
+      # schema คือสัญญาที่ทั้ง mobile และ back office ยึด
+      # ถ้าแก้ schema แล้วลืม generate โค้ดจะไม่ตรงกับที่ประกาศไว้
+      - name: ตรวจว่า generate แล้วไม่มีอะไรเปลี่ยน
+        run: |
+          go run github.com/99designs/gqlgen generate
+          if ! git diff --exit-code --stat; then
+            echo "🔴 แก้ schema แล้วยังไม่ได้ generate — รัน gqlgen generate แล้ว commit ด้วย"
+            exit 1
+          fi
+
+      - name: ตรวจว่าไม่มีความลับหลุดเข้า repo
+        run: |
+          if git ls-files | grep -E '\.(pem|key)$|kubeconfig'; then
+            echo "🔴 พบไฟล์ที่ไม่ควรอยู่ใน repo"
+            exit 1
+          fi
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v2
+        with:
+          driver: docker-container
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create kubeconfig from secret
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_CONTENT }}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+          echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
+
+      - uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: 'v3.12.0'
+
+      - name: Deploy using Helm
+        run: |
+          # pipefail สำคัญ — ถ้าไม่ใส่ helm ล้มแล้ว job ยังขึ้นเขียว
+          # ทำให้ deploy ไม่ขึ้นจริงโดยไม่มีใครรู้
+          set -euo pipefail
+
+          if [ -z "${{ secrets.INGRESS_HOST }}" ] || [ -z "${{ secrets.PUBLIC_BASE_URL }}" ]; then
+            echo "🔴 ต้องตั้ง secret INGRESS_HOST และ PUBLIC_BASE_URL ก่อน"
+            echo "   ทั้งสองค่าเป็น hostname จริงจึงไม่เก็บใน repo ที่เป็น public"
+            exit 1
+          fi
+
+          helm upgrade --install vertex-bff ./helm/vertex-bff \
+            --namespace vertex \
+            --set image.tag=sha-${{ github.sha }} \
+            --set publicBaseURL="${{ secrets.PUBLIC_BASE_URL }}" \
+            --set ingress.host="${{ secrets.INGRESS_HOST }}" \
+            --wait --timeout 3m
+
+      - name: ตรวจว่า pod ตอบจริงหลัง deploy
+        run: |
+          set -euo pipefail
+          kubectl -n vertex get pods -l app.kubernetes.io/name=vertex-bff
+          # helm --wait ผ่านไม่ได้แปลว่าแอปทำงาน — เคยเจอกับ Filebeat
+          # ที่ rollout ขึ้นเขียวทั้งที่ CrashLoop อยู่ จึงต้องถาม readiness อีกที
+          kubectl -n vertex wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=vertex-bff --timeout=120s
