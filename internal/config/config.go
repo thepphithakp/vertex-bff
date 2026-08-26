@@ -46,6 +46,19 @@ type Config struct {
 
 	// EnableIntrospection ปิดไว้บน production
 	EnableIntrospection bool
+
+	// Gemini ใช้เขียนคำวิเคราะห์บนหน้าน้ำ (VT-108)
+	//
+	// ไม่ตั้ง GeminiAPIKey = ปิด feature ทั้งอัน ฟิลด์ waterInsight จะคืน null
+	// แล้วแอปตกกลับไปใช้ข้อความ rule-based เดิม — service ยัง start ได้ปกติ
+	// เพราะนี่เป็นของเสริม ไม่ใช่ dependency ที่ขาดไม่ได้
+	GeminiAPIKey string
+	GeminiModel  string
+	// timeout สั้นกว่า UpstreamTimeout เพราะผู้ใช้รอหน้าจออยู่
+	// ยอมไม่มีคำวิเคราะห์ดีกว่าให้ทั้งหน้าค้างรอ LLM
+	GeminiTimeout time.Duration
+	// cache ตามลายนิ้วมือของตัวเลข ไม่ได้ตามเวลา — ดู insight.go
+	AIInsightCacheTTL time.Duration
 }
 
 func Load() (Config, error) {
@@ -59,6 +72,10 @@ func Load() (Config, error) {
 		MaxQueryDepth:       envInt("MAX_QUERY_DEPTH", 9),
 		MaxQueryComplexity:  envInt("MAX_QUERY_COMPLEXITY", 5000),
 		EnableIntrospection: envBool("ENABLE_INTROSPECTION", false),
+		GeminiAPIKey:        env("GEMINI_API_KEY", ""),
+		GeminiModel:         env("GEMINI_MODEL", "gemini-3.5-flash"),
+		GeminiTimeout:       envDuration("GEMINI_TIMEOUT", 8*time.Second),
+		AIInsightCacheTTL:   envDuration("AI_INSIGHT_CACHE_TTL", 6*time.Hour),
 	}
 
 	if c.PublicBaseURL == "" {

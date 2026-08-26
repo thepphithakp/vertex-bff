@@ -3,6 +3,7 @@ package graph
 // ไฟล์นี้ gqlgen ไม่ generate ทับ — ใช้ผูก dependency เข้า resolver
 
 import (
+	"github.com/vertex/bff/internal/ai"
 	"github.com/vertex/bff/internal/client"
 	"github.com/vertex/bff/internal/config"
 )
@@ -17,4 +18,8 @@ type Resolver struct {
 	AuthSvc  *client.AuthClient
 	EventSvc *client.EventClient
 	Cfg      config.Config
+
+	// AI เป็น nil ได้ — environment ที่ไม่ได้ตั้ง key จะไม่มีตัวนี้
+	// resolver ต้องเช็คก่อนใช้ทุกครั้ง
+	AI *ai.Service
 }

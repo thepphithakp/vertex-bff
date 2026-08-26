@@ -85,6 +85,34 @@ query ที่ถูกมันปฏิเสธจะไม่มีบร�
 `internal/graph/mapping.go` ที่มีบทเรียนของ [VT-105](https://thepphithakp.atlassian.net/browse/VT-105)
 เขียนกำกับไว้ ห้ามกลับไปใช้ `t.Location()` ของแต่ละค่าเด็ดขาด
 
+## คำวิเคราะห์ด้วย LLM (VT-108)
+
+การ์ด "AI Analysis" บนหน้าน้ำเคยเป็น `if/else` 5 ก้อนตาม % ของเป้าหมาย
+ตอนนี้ข้อความมาจาก Gemini ผ่าน field `pet.waterInsight`
+
+**key อยู่ที่ BFF เท่านั้น** ห้ามย้ายไปฝั่งแอป — repo ของแอปเป็น public
+และ string ใน `.ipa` ถูกดึงออกได้ด้วย `strings` key หลุดแล้วคนอื่นยิง quota แทน
+
+```sh
+kubectl -n vertex create secret generic gemini-api-key \
+  --from-literal=GEMINI_API_KEY='<key จาก aistudio.google.com/apikey>'
+```
+
+`waterInsight` **คืน null ได้เสมอ** — ไม่มี key, เรียกไม่สำเร็จ, เกิน quota
+หรือ timeout ล้วนได้ null client ต้องมีข้อความสำรองของตัวเองเสมอ ห้ามปล่อยการ์ดว่าง
+
+สามอย่างที่พิสูจน์กับ API จริงมาแล้วและมี test กันไว้:
+
+- **ต้องปิด thinking** (`thinkingConfig.thinkingBudget = 0`) — Gemini 3.x เปิดไว้เป็น
+  ค่าเริ่มต้นและโทเคนที่ใช้คิดถูกหักจาก `maxOutputTokens` ก้อนเดียวกัน
+  ผลคือตอบมา 12 โทเคนแล้วตัดกลางประโยคโดย `finishReason` ไม่ได้บอกว่าโดนตัด
+- **key ส่งทาง header** `x-goog-api-key` ไม่ใช่ query string ที่ไปโผล่ใน access log ของ proxy
+- **cache คิดจากตัวเลข ไม่ใช่เวลา** — ปัดปริมาณน้ำเป็นช่วงละ 10 ml ไม่งั้นกดเพิ่มทีละ
+  5 ml จะ generate ใหม่ทุกครั้งจนหมด quota ของ free tier
+
+สิ่งที่ออกไปนอกคลัสเตอร์มีแค่ตัวเลขสรุปกับข้อมูลสัตว์เลี้ยง (ดู `WaterFacts`)
+**ไม่มี user id, email หรือ pet id** — มี test คุมไว้
+
 ## ทดสอบ
 
 ```sh
@@ -121,6 +149,10 @@ PY
 | `MAX_QUERY_COMPLEXITY` | `5000` | เพดานความแพงของ query |
 | `MAX_QUERY_DEPTH` | `9` | เพดานความลึกของ query (`0` = ไม่บังคับ) |
 | `ENABLE_INTROSPECTION` | `false` | เปิดเฉพาะตอน dev |
+| `GEMINI_API_KEY` | ไม่มี | ไม่ตั้ง = `waterInsight` คืน null แล้วแอปใช้ข้อความสำรอง |
+| `GEMINI_MODEL` | `gemini-3.5-flash` | ทดสอบแล้ว `2.5-flash` ตอบ 404 กับ key ของ AI Studio |
+| `GEMINI_TIMEOUT` | `8s` | สั้นกว่า upstream เพราะผู้ใช้รอหน้าจออยู่ |
+| `AI_INSIGHT_CACHE_TTL` | `6h` | cache ตามลายนิ้วมือของตัวเลข ไม่ใช่ตามเวลา |
 | `UPSTREAM_TIMEOUT` | `10s` | timeout ตอนเรียก service |
 
 บน k8s ให้ชี้ไปที่ ClusterIP ภายใน **ห้าม hardcode hostname จริงลงในไฟล์ที่ commit**

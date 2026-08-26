@@ -175,6 +175,7 @@ type ComplexityRoot struct {
 		Species           func(childComplexity int) int
 		UpdatedAt         func(childComplexity int) int
 		ViewerPermissions func(childComplexity int) int
+		WaterInsight      func(childComplexity int, from time.Time, to time.Time) int
 		WaterLogs         func(childComplexity int, first *int, after *string, from *time.Time, to *time.Time) int
 		WaterSummary      func(childComplexity int, from time.Time, to time.Time) int
 	}
@@ -262,6 +263,13 @@ type ComplexityRoot struct {
 		Ml   func(childComplexity int) int
 	}
 
+	WaterInsight struct {
+		Cached      func(childComplexity int) int
+		GeneratedAt func(childComplexity int) int
+		Model       func(childComplexity int) int
+		Text        func(childComplexity int) int
+	}
+
 	WaterLog struct {
 		Amount            func(childComplexity int) int
 		CreatedAt         func(childComplexity int) int
@@ -336,6 +344,7 @@ type PetResolver interface {
 	WaterLogs(ctx context.Context, obj *model.Pet, first *int, after *string, from *time.Time, to *time.Time) (*model.WaterLogConnection, error)
 	LitterSummary(ctx context.Context, obj *model.Pet, from time.Time, to time.Time) (*model.LitterSummary, error)
 	WaterSummary(ctx context.Context, obj *model.Pet, from time.Time, to time.Time) (*model.WaterSummary, error)
+	WaterInsight(ctx context.Context, obj *model.Pet, from time.Time, to time.Time) (*model.WaterInsight, error)
 }
 type PetCaregiverResolver interface {
 	User(ctx context.Context, obj *model.PetCaregiver) (*model.User, error)
@@ -1033,6 +1042,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Pet.ViewerPermissions(childComplexity), true
+	case "Pet.waterInsight":
+		if e.ComplexityRoot.Pet.WaterInsight == nil {
+			break
+		}
+
+		args, err := ec.field_Pet_waterInsight_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Pet.WaterInsight(childComplexity, args["from"].(time.Time), args["to"].(time.Time)), true
 	case "Pet.waterLogs":
 		if e.ComplexityRoot.Pet.WaterLogs == nil {
 			break
@@ -1355,6 +1375,31 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.WaterDailyBucket.Ml(childComplexity), true
+
+	case "WaterInsight.cached":
+		if e.ComplexityRoot.WaterInsight.Cached == nil {
+			break
+		}
+
+		return e.ComplexityRoot.WaterInsight.Cached(childComplexity), true
+	case "WaterInsight.generatedAt":
+		if e.ComplexityRoot.WaterInsight.GeneratedAt == nil {
+			break
+		}
+
+		return e.ComplexityRoot.WaterInsight.GeneratedAt(childComplexity), true
+	case "WaterInsight.model":
+		if e.ComplexityRoot.WaterInsight.Model == nil {
+			break
+		}
+
+		return e.ComplexityRoot.WaterInsight.Model(childComplexity), true
+	case "WaterInsight.text":
+		if e.ComplexityRoot.WaterInsight.Text == nil {
+			break
+		}
+
+		return e.ComplexityRoot.WaterInsight.Text(childComplexity), true
 
 	case "WaterLog.amount":
 		if e.ComplexityRoot.WaterLog.Amount == nil {
@@ -1700,6 +1745,17 @@ type Pet {
   "สรุปการกินน้ำ — เรื่อง timezone เหมือน litterSummary ทุกอย่าง"
   waterSummary(from: DateTime!, to: DateTime!): WaterSummary!
 
+  """
+  คำวิเคราะห์การกินน้ำที่เขียนด้วย LLM จากตัวเลขของช่วงเวลาที่ส่งมา
+
+  **คืน null ได้เสมอ** — ยังไม่ได้ตั้ง API key, เรียก LLM ไม่สำเร็จ หรือเกิน
+  quota ของ free tier ล้วนได้ null ทั้งหมด client ต้องมีข้อความสำรองของตัวเอง
+  ไม่ใช่ปล่อยการ์ดว่าง (VT-108)
+
+  ราคาแพงกว่าฟิลด์อื่นมากเพราะออกไปนอกคลัสเตอร์ — ดู complexity.go
+  """
+  waterInsight(from: DateTime!, to: DateTime!): WaterInsight
+
   createdAt: DateTime!
   updatedAt: DateTime!
 }
@@ -1793,6 +1849,24 @@ type WaterSummary {
   dailyTargetMl: Int
 
   daily: [WaterDailyBucket!]!
+}
+
+"""
+คำวิเคราะห์ที่มาจาก LLM ไม่ใช่กฎ if/else
+
+เก็บ model กับ generatedAt ไว้ด้วยเพื่อให้ตอบได้ว่าข้อความที่ผู้ใช้เห็น
+มาจากโมเดลตัวไหนและตอนไหน เวลาสำนวนเพี้ยนจะได้ไล่ย้อนได้
+"""
+type WaterInsight {
+  text: String!
+
+  "ชื่อโมเดลที่ generate ข้อความนี้ เช่น gemini-2.5-flash"
+  model: String!
+
+  generatedAt: DateTime!
+
+  "true = ได้จาก cache ของ BFF ไม่ได้ยิงไปที่ LLM ใหม่"
+  cached: Boolean!
 }
 
 type WaterDailyBucket {
@@ -2302,6 +2376,8 @@ func (ec *executionContext) childFields_Pet(ctx context.Context, field graphql.C
 		return ec.fieldContext_Pet_litterSummary(ctx, field)
 	case "waterSummary":
 		return ec.fieldContext_Pet_waterSummary(ctx, field)
+	case "waterInsight":
+		return ec.fieldContext_Pet_waterInsight(ctx, field)
 	case "createdAt":
 		return ec.fieldContext_Pet_createdAt(ctx, field)
 	case "updatedAt":
@@ -2462,6 +2538,20 @@ func (ec *executionContext) childFields_WaterDailyBucket(ctx context.Context, fi
 		return ec.fieldContext_WaterDailyBucket_ml(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type WaterDailyBucket", field.Name)
+}
+
+func (ec *executionContext) childFields_WaterInsight(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "text":
+		return ec.fieldContext_WaterInsight_text(ctx, field)
+	case "model":
+		return ec.fieldContext_WaterInsight_model(ctx, field)
+	case "generatedAt":
+		return ec.fieldContext_WaterInsight_generatedAt(ctx, field)
+	case "cached":
+		return ec.fieldContext_WaterInsight_cached(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type WaterInsight", field.Name)
 }
 
 func (ec *executionContext) childFields_WaterLog(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -3105,6 +3195,28 @@ func (ec *executionContext) field_Pet_litterLogs_args(ctx context.Context, rawAr
 }
 
 func (ec *executionContext) field_Pet_litterSummary_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "from",
+		func(ctx context.Context, v any) (time.Time, error) {
+			return ec.unmarshalNDateTime2timeᚐTime(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["from"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "to",
+		func(ctx context.Context, v any) (time.Time, error) {
+			return ec.unmarshalNDateTime2timeᚐTime(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["to"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Pet_waterInsight_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
 	var err error
 	args := map[string]any{}
 	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "from",
@@ -5969,6 +6081,50 @@ func (ec *executionContext) fieldContext_Pet_waterSummary(ctx context.Context, f
 	return fc, nil
 }
 
+func (ec *executionContext) _Pet_waterInsight(ctx context.Context, field graphql.CollectedField, obj *model.Pet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Pet_waterInsight(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Pet().WaterInsight(ctx, obj, fc.Args["from"].(time.Time), fc.Args["to"].(time.Time))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *model.WaterInsight) graphql.Marshaler {
+			return ec.marshalOWaterInsight2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterInsight(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Pet_waterInsight(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Pet",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_WaterInsight(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Pet_waterInsight_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Pet_createdAt(ctx context.Context, field graphql.CollectedField, obj *model.Pet) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -7290,6 +7446,98 @@ func (ec *executionContext) _WaterDailyBucket_ml(ctx context.Context, field grap
 }
 func (ec *executionContext) fieldContext_WaterDailyBucket_ml(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("WaterDailyBucket", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _WaterInsight_text(ctx context.Context, field graphql.CollectedField, obj *model.WaterInsight) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_WaterInsight_text(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Text, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_WaterInsight_text(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("WaterInsight", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _WaterInsight_model(ctx context.Context, field graphql.CollectedField, obj *model.WaterInsight) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_WaterInsight_model(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Model, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_WaterInsight_model(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("WaterInsight", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _WaterInsight_generatedAt(ctx context.Context, field graphql.CollectedField, obj *model.WaterInsight) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_WaterInsight_generatedAt(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.GeneratedAt, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v time.Time) graphql.Marshaler {
+			return ec.marshalNDateTime2timeᚐTime(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_WaterInsight_generatedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("WaterInsight", field, false, false, errors.New("field of type DateTime does not have child fields"))
+}
+
+func (ec *executionContext) _WaterInsight_cached(ctx context.Context, field graphql.CollectedField, obj *model.WaterInsight) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_WaterInsight_cached(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Cached, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v bool) graphql.Marshaler {
+			return ec.marshalNBoolean2bool(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_WaterInsight_cached(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("WaterInsight", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
 func (ec *executionContext) _WaterLog_id(ctx context.Context, field graphql.CollectedField, obj *model.WaterLog) (ret graphql.Marshaler) {
@@ -10645,6 +10893,44 @@ func (ec *executionContext) _Pet(ctx context.Context, sel ast.SelectionSet, obj 
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "waterInsight":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Pet_waterInsight(ctx, field, obj)
+				if res == graphql.RequiredNull {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
 		case "createdAt":
 			out.Values[i] = ec._Pet_createdAt(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -11455,6 +11741,59 @@ func (ec *executionContext) _WaterDailyBucket(ctx context.Context, sel ast.Selec
 			}
 		case "ml":
 			out.Values[i] = ec._WaterDailyBucket_ml(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var waterInsightImplementors = []string{"WaterInsight"}
+
+func (ec *executionContext) _WaterInsight(ctx context.Context, sel ast.SelectionSet, obj *model.WaterInsight) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, waterInsightImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("WaterInsight")
+		case "text":
+			out.Values[i] = ec._WaterInsight_text(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "model":
+			out.Values[i] = ec._WaterInsight_model(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "generatedAt":
+			out.Values[i] = ec._WaterInsight_generatedAt(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "cached":
+			out.Values[i] = ec._WaterInsight_cached(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -13138,6 +13477,13 @@ func (ec *executionContext) marshalOUserConnection2ᚖgithubᚗcomᚋvertexᚋbf
 		return graphql.Null
 	}
 	return ec._UserConnection(ctx, sel, v)
+}
+
+func (ec *executionContext) marshalOWaterInsight2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterInsight(ctx context.Context, sel ast.SelectionSet, v *model.WaterInsight) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._WaterInsight(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalO__EnumValue2ᚕgithubᚗcomᚋ99designsᚋgqlgenᚋgraphqlᚋintrospectionᚐEnumValueᚄ(ctx context.Context, sel ast.SelectionSet, v []introspection.EnumValue) graphql.Marshaler {

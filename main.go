@@ -20,6 +20,7 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
+	"github.com/vertex/bff/internal/ai"
 	"github.com/vertex/bff/internal/client"
 	"github.com/vertex/bff/internal/config"
 	"github.com/vertex/bff/internal/graph"
@@ -42,8 +43,24 @@ func main() {
 	authSvc := client.NewAuthClient(cfg.AuthServiceURL, cfg.UpstreamTimeout)
 	eventSvc := client.NewEventClient(cfg.EventServiceURL, cfg.UpstreamTimeout)
 
+	// ไม่ตั้ง GEMINI_API_KEY = ไม่มี AI service เลย ฟิลด์ waterInsight จะคืน null
+	// แล้วแอปใช้ข้อความสำรองของตัวเอง — ตั้งใจให้ start ได้โดยไม่ต้องมี key
+	// เพราะเป็นของเสริม ไม่ใช่ dependency ที่ขาดแล้วระบบใช้ไม่ได้
+	var insightSvc *ai.Service
+	if cfg.GeminiAPIKey != "" {
+		insightSvc = ai.NewService(
+			ai.NewGemini(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiTimeout),
+			cfg.AIInsightCacheTTL,
+		)
+		slog.Info("เปิดใช้คำวิเคราะห์ด้วย LLM", "model", cfg.GeminiModel,
+			"cache_ttl", cfg.AIInsightCacheTTL.String())
+	} else {
+		slog.Info("ไม่ได้ตั้ง GEMINI_API_KEY — waterInsight จะคืน null และแอปจะใช้ข้อความสำรอง")
+	}
+
 	resolver := &graph.Resolver{
 		PetSvc: petSvc, AuthSvc: authSvc, EventSvc: eventSvc, Cfg: cfg,
+		AI: insightSvc,
 	}
 
 	srv := newGraphQLServer(resolver, cfg)

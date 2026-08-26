@@ -7,9 +7,11 @@ package graph
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/vektah/gqlparser/v2/gqlerror"
+	"github.com/vertex/bff/internal/ai"
 	"github.com/vertex/bff/internal/client"
 	"github.com/vertex/bff/internal/graph/model"
 	"github.com/vertex/bff/internal/loader"
@@ -458,6 +460,61 @@ func (r *petResolver) WaterSummary(ctx context.Context, obj *model.Pet, from tim
 		return nil, gqlErr(err)
 	}
 	return buildWaterSummary(logs, from, to, obj.CurrentWeight), nil
+}
+
+// WaterInsight is the resolver for the waterInsight field.
+//
+// คืน null แทน error ทุกกรณีที่ LLM ใช้ไม่ได้ — ไม่ได้ตั้ง key, เรียกไม่ผ่าน,
+// เกิน quota หรือ timeout ล้วนแปลว่า "ไม่มีคำวิเคราะห์รอบนี้" ไม่ใช่ว่า
+// ทั้ง query พัง ถ้าคืน error ออกไป การ์ดอื่นบนหน้าเดียวกันจะหายไปด้วย
+// เพราะ error ของ field ที่ non-null จะไหลขึ้นไปทำให้ parent เป็น null
+func (r *petResolver) WaterInsight(ctx context.Context, obj *model.Pet, from time.Time, to time.Time) (*model.WaterInsight, error) {
+	if r.AI == nil || !r.AI.Enabled() {
+		return nil, nil
+	}
+
+	logs, err := r.allWaterInRange(ctx, obj.ID, from, to)
+	if err != nil {
+		return nil, gqlErr(err)
+	}
+	summary := buildWaterSummary(logs, from, to, obj.CurrentWeight)
+
+	facts := ai.WaterFacts{
+		PetName:     obj.Name,
+		Species:     obj.Species,
+		AgeLabel:    ageLabel(obj.BirthDate, time.Now()),
+		WeightKg:    obj.CurrentWeight,
+		AvgMlPerDay: summary.AvgMlPerDay,
+		DaysInRange: len(summary.Daily),
+		TargetMl:    summary.DailyTargetMl,
+	}
+	// ถังสุดท้ายคือวันล่าสุดในช่วง ซึ่งคือวันที่หน้าจอกำลังแสดงอยู่
+	if n := len(summary.Daily); n > 0 {
+		facts.TodayMl = summary.Daily[n-1].Ml
+	}
+	if summary.DailyTargetMl != nil {
+		for _, d := range summary.Daily {
+			if d.Ml < *summary.DailyTargetMl {
+				facts.DaysBelowTarget++
+			}
+		}
+	}
+
+	ins, err := r.AI.WaterInsight(ctx, facts)
+	if err != nil {
+		// log ไว้ให้เห็นว่าทำไมการ์ดถึงตกไปใช้ข้อความสำรอง
+		// ไม่งั้นจะดูไม่ออกเลยว่า feature ปิดอยู่หรือ key หมดอายุ
+		slog.WarnContext(ctx, "water insight ใช้ไม่ได้ ตกไปใช้ข้อความสำรองของ client",
+			"error", err.Error(), "pet_id", obj.ID)
+		return nil, nil
+	}
+
+	return &model.WaterInsight{
+		Text:        ins.Text,
+		Model:       ins.Model,
+		GeneratedAt: ins.GeneratedAt,
+		Cached:      ins.Cached,
+	}, nil
 }
 
 // User is the resolver for the user field.

@@ -116,6 +116,23 @@ query WaterDay($petId: UUID!, $from: DateTime!, $to: DateTime!) {
   }
 }
 
+# การ์ด AI บนหน้าน้ำ (VT-108)
+#
+# แยกจาก WaterDay เพราะมองย้อนหลังหลายวัน ส่วน WaterDay ดูวันเดียว
+# และเพราะฟิลด์นี้ออกไปหา LLM นอกคลัสเตอร์ จึงไม่อยากให้ถูกยิงพ่วงไป
+# ทุกครั้งที่ผู้ใช้กดเปลี่ยนวันบนหน้าจอ
+query WaterInsight($petId: UUID!, $from: DateTime!, $to: DateTime!) {
+  pet(id: $petId) {
+    id
+    waterInsight(from: $from, to: $to) {
+      text
+      model
+      generatedAt
+      cached
+    }
+  }
+}
+
 # หน้าบันทึกทราย ของวันเดียว
 query LitterDay($petId: UUID!, $from: DateTime!, $to: DateTime!) {
   pet(id: $petId) {

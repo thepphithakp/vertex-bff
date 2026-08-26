@@ -196,6 +196,14 @@ type Pet struct {
 	LitterSummary *LitterSummary `json:"litterSummary"`
 	// สรุปการกินน้ำ — เรื่อง timezone เหมือน litterSummary ทุกอย่าง
 	WaterSummary *WaterSummary `json:"waterSummary"`
+	// คำวิเคราะห์การกินน้ำที่เขียนด้วย LLM จากตัวเลขของช่วงเวลาที่ส่งมา
+	//
+	// **คืน null ได้เสมอ** — ยังไม่ได้ตั้ง API key, เรียก LLM ไม่สำเร็จ หรือเกิน
+	// quota ของ free tier ล้วนได้ null ทั้งหมด client ต้องมีข้อความสำรองของตัวเอง
+	// ไม่ใช่ปล่อยการ์ดว่าง (VT-108)
+	//
+	// ราคาแพงกว่าฟิลด์อื่นมากเพราะออกไปนอกคลัสเตอร์ — ดู complexity.go
+	WaterInsight *WaterInsight `json:"waterInsight,omitempty"`
 	CreatedAt    time.Time     `json:"createdAt"`
 	UpdatedAt    time.Time     `json:"updatedAt"`
 }
@@ -307,6 +315,19 @@ type Viewer struct {
 type WaterDailyBucket struct {
 	Date time.Time `json:"date"`
 	Ml   int       `json:"ml"`
+}
+
+// คำวิเคราะห์ที่มาจาก LLM ไม่ใช่กฎ if/else
+//
+// เก็บ model กับ generatedAt ไว้ด้วยเพื่อให้ตอบได้ว่าข้อความที่ผู้ใช้เห็น
+// มาจากโมเดลตัวไหนและตอนไหน เวลาสำนวนเพี้ยนจะได้ไล่ย้อนได้
+type WaterInsight struct {
+	Text string `json:"text"`
+	// ชื่อโมเดลที่ generate ข้อความนี้ เช่น gemini-2.5-flash
+	Model       string    `json:"model"`
+	GeneratedAt time.Time `json:"generatedAt"`
+	// true = ได้จาก cache ของ BFF ไม่ได้ยิงไปที่ LLM ใหม่
+	Cached bool `json:"cached"`
 }
 
 type WaterLog struct {

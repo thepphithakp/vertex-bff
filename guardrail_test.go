@@ -126,6 +126,14 @@ func TestRealOperationsFitUnderDefaults(t *testing.T) {
 				totalMl avgMlPerDay dailyTargetMl daily { date ml }
 			}
 		} }`,
+		// ฟิลด์นี้แพงที่สุดในบรรดาของจริง เพราะออกไปนอกคลัสเตอร์
+		// ถ้าวันหนึ่งราคาถูกปรับขึ้นจนเกินเพดาน แอปจะไม่มีคำวิเคราะห์เลย
+		"WaterInsight": `query WaterInsight { pet(id: "pet-1") {
+			id
+			waterInsight(from: "2026-08-20T00:00:00+07:00", to: "2026-08-26T23:59:00+07:00") {
+				text model generatedAt cached
+			}
+		} }`,
 		"LitterDay": `query LitterDay { pet(id: "pet-1") {
 			id litterLogs(first: 200, from: "2026-08-26T00:00:00+07:00", to: "2026-08-27T00:00:00+07:00") {
 				edges { node { id date type amount } }

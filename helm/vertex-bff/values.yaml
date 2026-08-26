@@ -47,6 +47,23 @@ graphql:
   # ปิดบน production ไม่ให้ใครดึง schema ทั้งก้อนไปดู
   enableIntrospection: false
 
+# คำวิเคราะห์ด้วย LLM บนหน้าน้ำ (VT-108)
+#
+# key อยู่ใน Secret ที่สร้างแยกนอก chart — ไม่ผ่าน values และไม่ผ่าน CI
+# เพราะ repo นี้เป็น public และ values ถูก render ลง log ของ helm ได้
+# ไม่มี Secret = ฟิลด์ waterInsight คืน null แล้วแอปใช้ข้อความสำรองของตัวเอง
+ai:
+  secretName: gemini-api-key
+  secretKey: GEMINI_API_KEY
+  # ทดสอบกับ key จริงแล้ว: 2.5-flash ตอบ 404 ส่วน 3.5-flash ใช้ได้และตอบใน ~2 วินาที
+  model: gemini-3.5-flash
+  # สั้นกว่า upstream timeout เพราะผู้ใช้รอหน้าจออยู่
+  # ยอมไม่มีคำวิเคราะห์ ดีกว่าให้ทั้งหน้าค้างรอ LLM
+  timeout: 8s
+  # cache คิดจากลายนิ้วมือของตัวเลข ไม่ใช่ตามเวลา — ข้อความจะเปลี่ยน
+  # เมื่อพฤติกรรมการกินน้ำเปลี่ยน ไม่ใช่เปลี่ยนเพราะครบชั่วโมง
+  cacheTTL: 6h
+
 ingress:
   enabled: true
   className: nginx

@@ -49,6 +49,23 @@ spec:
               value: {{ .Values.graphql.maxDepth | quote }}
             - name: ENABLE_INTROSPECTION
               value: {{ .Values.graphql.enableIntrospection | quote }}
+            - name: GEMINI_MODEL
+              value: {{ .Values.ai.model | quote }}
+            - name: GEMINI_TIMEOUT
+              value: {{ .Values.ai.timeout | quote }}
+            - name: AI_INSIGHT_CACHE_TTL
+              value: {{ .Values.ai.cacheTTL | quote }}
+            {{- if .Values.ai.secretName }}
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ai.secretName }}
+                  key: {{ .Values.ai.secretKey }}
+                  # optional: ไม่มี Secret ก็ต้อง start ได้ — feature นี้เป็นของเสริม
+                  # ถ้าไม่ใส่ optional pod จะค้างที่ CreateContainerConfigError
+                  # ทั้งที่ทุกอย่างที่เหลือทำงานได้ปกติ
+                  optional: true
+            {{- end }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

@@ -13,9 +13,10 @@ import (
 // ตัวเลขพวกนี้ไม่ได้อิงหน่วยอะไรจริง เป็นแค่การบอกว่า "แพงกว่าอ่าน field เฉยๆ
 // ประมาณสิบเท่า" เทียบกับเพดาน MAX_QUERY_COMPLEXITY ที่ตั้งไว้ 1000
 const (
-	costUpstreamCall = 10 // หนึ่ง request ออกไปหา service
-	costLoaderCall   = 5  // ผ่าน loader ที่รวบให้เหลือครั้งเดียวต่อ request
-	costNamespace    = 1  // field ที่ไม่ทำอะไรเอง ลูกเป็นคนทำงาน
+	costUpstreamCall = 10  // หนึ่ง request ออกไปหา service
+	costLLMCall      = 250 // หนึ่ง request ออกไปหา LLM นอกคลัสเตอร์ + กิน quota
+	costLoaderCall   = 5   // ผ่าน loader ที่รวบให้เหลือครั้งเดียวต่อ request
+	costNamespace    = 1   // field ที่ไม่ทำอะไรเอง ลูกเป็นคนทำงาน
 )
 
 // จำนวนแถวที่เดาไว้สำหรับ list ที่ไม่มี `first` ให้จำกัด
@@ -112,6 +113,16 @@ func NewComplexityRoot() ComplexityRoot {
 	}
 	c.Pet.WaterSummary = func(childComplexity int, from time.Time, to time.Time) int {
 		return childComplexity*summaryDays(from, to) + costUpstreamCall
+	}
+
+	// คำวิเคราะห์ด้วย LLM — แพงกว่าฟิลด์อื่นทุกตัว
+	//
+	// ต้องดึง log ทั้งช่วงเหมือน summary แล้วยังออกไปนอกคลัสเตอร์ต่อ
+	// ซึ่งกิน quota ที่มีเพดานต่อนาที ไม่ใช่แค่กิน CPU ของเราเอง
+	// ตั้งไว้แพงเพื่อให้ query ที่ขอฟิลด์นี้ให้แมวหลายตัวพร้อมกันชนเพดาน
+	// ตั้งแต่ต้นแทนที่จะไปเผา quota จนหมดแล้วค่อยรู้
+	c.Pet.WaterInsight = func(childComplexity int, from time.Time, to time.Time) int {
+		return childComplexity*summaryDays(from, to) + costLLMCall
 	}
 
 	// ---------------------------------------------------------------------

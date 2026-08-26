@@ -58,6 +58,7 @@ models:
       litterLogs: { resolver: true }
       waterLogs: { resolver: true }
       litterSummary: { resolver: true }
+      waterInsight: { resolver: true }
       waterSummary: { resolver: true }
 
   PetCaregiver:
