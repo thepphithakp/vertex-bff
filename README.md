@@ -17,7 +17,7 @@ BFF ย้ายการประกอบข้อมูลแบบนี้�
 | GraphQL schema | ✅ ([VT-98](https://thepphithakp.atlassian.net/browse/VT-98)) |
 | resolver + กัน N+1 | ✅ ([VT-101](https://thepphithakp.atlassian.net/browse/VT-101)) |
 | deploy ด้วย Helm | ✅ chart อยู่ที่ `helm/vertex-bff` ทำผ่าน GitHub Actions |
-| ย้าย client มาใช้ | ยังไม่เริ่ม — back office [VT-79](https://thepphithakp.atlassian.net/browse/VT-79)/[VT-80](https://thepphithakp.atlassian.net/browse/VT-80)/[VT-81](https://thepphithakp.atlassian.net/browse/VT-81), iOS [VT-102](https://thepphithakp.atlassian.net/browse/VT-102) |
+| ย้าย client มาใช้ | iOS ฝั่งอ่านเสร็จแล้ว ([VT-102](https://thepphithakp.atlassian.net/browse/VT-102)) — ฝั่งเขียน [VT-106](https://thepphithakp.atlassian.net/browse/VT-106), back office ยังไม่เริ่ม [VT-79](https://thepphithakp.atlassian.net/browse/VT-79)/[VT-80](https://thepphithakp.atlassian.net/browse/VT-80)/[VT-81](https://thepphithakp.atlassian.net/browse/VT-81) |
 
 proxy REST ชุดเดิมถูกเอาออกแล้ว — ไม่มีใครเรียกและ path ไม่ตรงกับที่ client ใช้จริง
 ตอนนี้ service นี้มี route เดียวคือ `POST /graphql` (บวก `/livez` `/readyz` `/health`)
@@ -60,6 +60,11 @@ service ตามที่ pet-service ตั้งใจไว้ และต�
 
 **ทุก operation ต้องมีชื่อ** เพราะชื่อจะถูกเขียนลง field `endpoint` ใน log
 ถ้าปล่อยให้ยิง anonymous query ได้ จะกรองใน Kibana ไม่ได้ว่า request มาจากหน้าไหน
+
+**การแบ่งวันใช้ timezone ของค่า `from`** ไม่ใช่ UTC และไม่ใช่ timezone ของ server
+เพราะ "วัน" ที่ผู้ใช้หมายถึงคือวันตามปฏิทินของเขา — ดู `dayKey` ใน
+`internal/graph/mapping.go` ที่มีบทเรียนของ [VT-105](https://thepphithakp.atlassian.net/browse/VT-105)
+เขียนกำกับไว้ ห้ามกลับไปใช้ `t.Location()` ของแต่ละค่าเด็ดขาด
 
 ## ทดสอบ
 

@@ -184,13 +184,20 @@ type Pet struct {
 	WaterLogs  *WaterLogConnection  `json:"waterLogs"`
 	// สรุปรายวันสำหรับหน้า Analytics
 	//
-	// ตอนนี้ client ดึง log ทั้งหมดตั้งแต่ต้นแล้ว group เองในเครื่อง
-	// ซึ่งทั้งเปลืองและทำงานไม่ถูกต้อง (ดูหมายเหตุใน VT-98)
-	// ให้ฝั่ง server ทำ GROUP BY ให้จบ
+	// ให้ฝั่ง server ทำ GROUP BY ให้จบ ไม่ต้องส่ง log ทั้งก้อนไปให้ client group เอง
+	// วันที่ไม่มีข้อมูลเซิร์ฟเวอร์เติม 0 มาให้ครบ กราฟจะได้ไม่ขาดช่วง
+	//
+	// ⚠️ "วัน" ถูกแบ่งตาม timezone ที่ติดมากับค่า `from` และปัดลงไปต้นวันของ
+	// timezone นั้น ส่งเวลาเดียวกันแต่เขียนคนละแบบจะได้คนละคำตอบ:
+	// `2026-08-20T00:00:00+07:00` ได้ 7 ถัง ส่วน `2026-08-19T17:00:00Z`
+	// ซึ่งเป็นเวลาเดียวกันได้ 8 ถัง และค่าเฉลี่ยต่อวันก็หารด้วยตัวหารต่างกัน
+	//
+	// client ต้องส่ง offset ของผู้ใช้เสมอ ห้ามแปลงเป็น UTC ก่อนส่ง (VT-105)
 	LitterSummary *LitterSummary `json:"litterSummary"`
-	WaterSummary  *WaterSummary  `json:"waterSummary"`
-	CreatedAt     time.Time      `json:"createdAt"`
-	UpdatedAt     time.Time      `json:"updatedAt"`
+	// สรุปการกินน้ำ — เรื่อง timezone เหมือน litterSummary ทุกอย่าง
+	WaterSummary *WaterSummary `json:"waterSummary"`
+	CreatedAt    time.Time     `json:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt"`
 }
 
 type PetCaregiver struct {
