@@ -6,12 +6,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vertex/bff/internal/config"
+	"github.com/vertex/bff/internal/graph"
 )
 
 // ค่าเดียวกับ default ใน config.Load() — test ที่พิสูจน์ว่า "แอปจริงยังใช้ได้"
 // ต้องรันด้วยค่าที่ใช้จริงบน production ไม่งั้นพิสูจน์อะไรไม่ได้
-const defaultComplexity = 5000
+const (
+	defaultComplexity = 5000
+	defaultDepth      = 9
+)
 
 func guardrailCfg(depth, complexity int) config.Config {
 	return config.Config{
@@ -101,7 +106,7 @@ func TestDepthLimitFollowsFragments(t *testing.T) {
 func TestRealOperationsFitUnderDefaults(t *testing.T) {
 	f := newFakeUpstream(t)
 	// ค่าเดียวกับ default ใน config.Load()
-	h := newTestServerWith(t, f, guardrailCfg(12, defaultComplexity))
+	h := newTestServerWith(t, f, guardrailCfg(defaultDepth, defaultComplexity))
 
 	cases := map[string]string{
 		"MyCats": `query MyCats { viewer { pets { id name breed hasAvatar } } }`,
@@ -140,7 +145,7 @@ func TestRealOperationsFitUnderDefaults(t *testing.T) {
 // ทำให้ resolver ทำงาน 200 × จำนวนผู้ดูแล ครั้ง
 func TestListComplexityMultipliesByRows(t *testing.T) {
 	f := newFakeUpstream(t)
-	h := newTestServerWith(t, f, guardrailCfg(12, defaultComplexity))
+	h := newTestServerWith(t, f, guardrailCfg(defaultDepth, defaultComplexity))
 
 	evil := execute(t, h, `query Evil {
 		admin { pets(first: 200) { edges { node { caregivers { user { id } } } } } }
@@ -163,7 +168,7 @@ func TestListComplexityMultipliesByRows(t *testing.T) {
 // ทั้งที่ query หน้าตาเหมือนกันเป๊ะ ต่างกันแค่ argument
 func TestSummaryRangeAffectsComplexity(t *testing.T) {
 	f := newFakeUpstream(t)
-	h := newTestServerWith(t, f, guardrailCfg(12, defaultComplexity))
+	h := newTestServerWith(t, f, guardrailCfg(defaultDepth, defaultComplexity))
 
 	week := execute(t, h, `query Week { pet(id: "pet-1") {
 		litterSummary(from: "2026-08-20T00:00:00Z", to: "2026-08-26T00:00:00Z") {
@@ -209,4 +214,67 @@ func TestDepthLimitOffWhenUnset(t *testing.T) {
 	if got := errCode(r); got == "DEPTH_LIMIT_EXCEEDED" {
 		t.Errorf("ตั้ง MAX_QUERY_DEPTH เป็น 0 ต้องไม่บังคับความลึก แต่ถูกปฏิเสธ")
 	}
+}
+
+// TestSchemaDepthMatchesLimit บังคับให้ MAX_QUERY_DEPTH ตรงกับ schema เสมอ
+//
+// เพดานที่ตั้งสูงกว่าความลึกที่ schema เป็นไปได้ = config ที่ไม่มีทางทำงาน
+// แต่ทำให้คนอ่านคิดว่ามีการป้องกันอยู่ ซึ่งแย่กว่าไม่มีเลย
+// (ตอนแรกตั้งไว้ 12 ทั้งที่ schema ลึกได้แค่ 9 — ไม่เคยกันอะไรเลย)
+//
+// ถ้า test นี้ fail แปลว่า schema เปลี่ยนไปแล้ว ให้ตัดสินใจว่าจะ
+// ยกเพดานตาม หรือความลึกที่เพิ่มมานั้นคือ cycle ที่ไม่ควรมีตั้งแต่แรก
+func TestSchemaDepthMatchesLimit(t *testing.T) {
+	schema := graph.NewExecutableSchema(graph.Config{}).Schema()
+
+	deepest, path := schemaMaxDepth(schema, schema.Query)
+	t.Logf("schema ลึกสุด %d ชั้น: %s", deepest, strings.Join(path, " > "))
+
+	const configured = defaultDepth
+
+	if deepest >= 1<<20 {
+		t.Fatalf("schema มี cycle ที่ %s — ความลึกไม่มีขอบเขตแล้ว เพดานความลึกกลายเป็นของที่ขาดไม่ได้ "+
+			"ตัดสินใจก่อนว่า cycle นี้ควรมีจริงไหม ถ้าควรมีให้ตั้ง MAX_QUERY_DEPTH เป็นค่าที่ query จริงยังใช้ได้",
+			strings.Join(path, " > "))
+	}
+	if deepest > configured {
+		t.Errorf("schema ลึกได้ %d ชั้น (%s) แต่ MAX_QUERY_DEPTH ตั้งไว้ %d — query ที่ถูกต้องจะถูกปฏิเสธ",
+			deepest, strings.Join(path, " > "), configured)
+	}
+	if deepest < configured {
+		t.Errorf("schema ลึกได้แค่ %d ชั้น แต่ MAX_QUERY_DEPTH ตั้งไว้ %d — เพดานนี้ไม่มีทางถูกแตะ ลดลงมาให้ตรง",
+			deepest, configured)
+	}
+}
+
+// schemaMaxDepth หาความลึกสูงสุดที่ query ถูกต้องตาม schema จะเป็นไปได้
+//
+// คืนค่ามหาศาลเมื่อเจอ cycle เพื่อให้ test ข้างบน fail ทันที — cycle คือกรณีที่
+// เพดานความลึกเปลี่ยนจาก "ของประดับ" เป็น "ของที่ขาดไม่ได้"
+func schemaMaxDepth(schema *ast.Schema, def *ast.Definition) (int, []string) {
+	var walk func(d *ast.Definition, stack []string) (int, []string)
+
+	walk = func(d *ast.Definition, stack []string) (int, []string) {
+		if d == nil || d.Kind != ast.Object {
+			return 0, nil
+		}
+		for _, seen := range stack {
+			if seen == d.Name {
+				return 1 << 20, []string{"<cycle:" + d.Name + ">"}
+			}
+		}
+		deepest, best := 0, []string(nil)
+		for _, f := range d.Fields {
+			if strings.HasPrefix(f.Name, "__") {
+				continue
+			}
+			child, p := walk(schema.Types[f.Type.Name()], append(stack, d.Name))
+			if 1+child > deepest {
+				deepest, best = 1+child, append([]string{f.Name}, p...)
+			}
+		}
+		return deepest, best
+	}
+
+	return walk(def, nil)
 }

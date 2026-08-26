@@ -38,8 +38,12 @@ graphql:
   # ส่วน query ที่ขอ 200 แถวแล้วซ้อน caregiver ต่อราคาเกินหมื่น
   # ตั้งต่ำกว่านี้จะบล็อกผู้ใช้จริงก่อนบล็อกคนยิงถล่ม (ดู guardrail_test.go)
   maxComplexity: 5000
+  # ต้องเท่ากับความลึกสูงสุดที่ schema เป็นไปได้ — ตอนนี้ 9
+  # ตั้งสูงกว่านั้น = เพดานที่ไม่มีทางถูกแตะ ให้ความมั่นใจปลอมๆ
+  # guardrail_test.go บังคับให้สองค่านี้ตรงกัน
+  #
   # 0 = ไม่บังคับ ห้ามใช้บน production
-  maxDepth: 12
+  maxDepth: 9
   # ปิดบน production ไม่ให้ใครดึง schema ทั้งก้อนไปดู
   enableIntrospection: false
 

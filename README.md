@@ -65,6 +65,11 @@ service ตามที่ pet-service ตั้งใจไว้ และต�
 เป็นทอดๆ ซึ่งอาจราคาถูกมากแต่ทำให้ resolver ระเบิด ส่วน `MAX_QUERY_COMPLEXITY`
 กัน query ที่ขอ list ใหญ่ซ้อนกันซึ่งอาจลึกแค่สามชั้น มีตัวเดียวไม่พอ
 
+`MAX_QUERY_DEPTH` ต้องเท่ากับความลึกสูงสุดที่ schema เป็นไปได้พอดี (ตอนนี้ 9)
+ตั้งสูงกว่านั้นคือเพดานที่ไม่มีทางถูกแตะ ซึ่งแย่กว่าไม่มีเพราะทำให้คนอ่านคิดว่ามีการ
+ป้องกันอยู่ — `TestSchemaDepthMatchesLimit` บังคับให้สองค่านี้ตรงกันเสมอ และจะ fail
+ทันทีถ้ามีใครทำให้ schema เกิด cycle (เช่นเพิ่ม `User.pets`)
+
 ราคาต่อ field อยู่ที่ `internal/graph/complexity.go` — field ที่เป็น list ต้อง
 **คูณ** ราคาของลูกด้วยจำนวนแถว ไม่ใช่บวก 1 ตามค่าเริ่มต้นของ gqlgen
 ใช้ `pageSize()` ตัวเดียวกับ resolver เพื่อให้ราคาตรงกับจำนวนแถวที่จะไปดึงจริง
@@ -108,7 +113,7 @@ PY
 | `EVENT_SERVICE_URL` | `http://localhost:4002` | ปลายทาง event-service |
 | `PUBLIC_BASE_URL` | **ไม่มี — บังคับ** | ที่อยู่สาธารณะ ใช้ประกอบ `avatarUrl` |
 | `MAX_QUERY_COMPLEXITY` | `5000` | เพดานความแพงของ query |
-| `MAX_QUERY_DEPTH` | `12` | เพดานความลึกของ query (`0` = ไม่บังคับ) |
+| `MAX_QUERY_DEPTH` | `9` | เพดานความลึกของ query (`0` = ไม่บังคับ) |
 | `ENABLE_INTROSPECTION` | `false` | เปิดเฉพาะตอน dev |
 | `UPSTREAM_TIMEOUT` | `10s` | timeout ตอนเรียก service |
 

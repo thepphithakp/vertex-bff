@@ -30,7 +30,17 @@ type Config struct {
 	// depth กัน query ที่ซ้อนวนเป็นทอดๆ ส่วน complexity กัน query ที่ขอ list ใหญ่
 	// query ที่ลึกอาจราคาถูกมาก และ query ที่แพงมากอาจลึกแค่สามชั้น
 	//
-	// ตั้ง MaxQueryDepth เป็น 0 = ไม่บังคับ (ใช้ตอน debug ในเครื่องเท่านั้น)
+	// MaxQueryDepth ตั้งไว้เท่ากับความลึกสูงสุดที่ schema ปัจจุบันเป็นไปได้ (9)
+	//
+	// ตอนนี้ schema ไม่มี cycle — `User` ไม่มี field ที่วนกลับไปหา `Pet` —
+	// ความลึกจึงถูกจำกัดด้วยตัว schema เองอยู่แล้ว เพดานนี้ยังไม่เคยกันอะไรจริง
+	//
+	// ที่ยังต้องมีเพราะมันเป็นสัญญาณเตือนตอน schema เปลี่ยน ถ้าวันหนึ่งมีคนเพิ่ม
+	// `User.pets` เข้าไป จะเกิด cycle ทันทีและ query ซ้อนไม่รู้จบจะเป็นไปได้
+	// ค่านี้ทำให้มันถูกปฏิเสธแทนที่จะทำให้ resolver ระเบิด
+	// (`TestSchemaDepthMatchesLimit` บังคับให้สองค่านี้ตรงกันเสมอ)
+	//
+	// ตั้งเป็น 0 = ไม่บังคับ ใช้ตอน debug ในเครื่องเท่านั้น
 	MaxQueryDepth      int
 	MaxQueryComplexity int
 
@@ -46,7 +56,7 @@ func Load() (Config, error) {
 		EventServiceURL:     env("EVENT_SERVICE_URL", "http://localhost:4002"),
 		PublicBaseURL:       env("PUBLIC_BASE_URL", ""),
 		UpstreamTimeout:     envDuration("UPSTREAM_TIMEOUT", 10*time.Second),
-		MaxQueryDepth:       envInt("MAX_QUERY_DEPTH", 12),
+		MaxQueryDepth:       envInt("MAX_QUERY_DEPTH", 9),
 		MaxQueryComplexity:  envInt("MAX_QUERY_COMPLEXITY", 5000),
 		EnableIntrospection: envBool("ENABLE_INTROSPECTION", false),
 	}
