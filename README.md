@@ -101,6 +101,19 @@ kubectl -n vertex create secret generic gemini-api-key \
 `waterInsight` **คืน null ได้เสมอ** — ไม่มี key, เรียกไม่สำเร็จ, เกิน quota
 หรือ timeout ล้วนได้ null client ต้องมีข้อความสำรองของตัวเองเสมอ ห้ามปล่อยการ์ดว่าง
 
+**โควตาของ free tier แยกก้อนต่อโมเดล** จึงตั้งเป็นลำดับแล้วสลับอัตโนมัติเมื่อโดน 429
+ไม่ใช่แค่กันพลาด แต่เพิ่มจำนวนครั้งที่ใช้ได้จริง
+
+| โมเดล | RPM | RPD |
+|---|---|---|
+| `gemini-3.5-flash-lite` (ตัวหลัก) | 15 | 500 |
+| `gemini-3.1-flash-lite` | 15 | 500 |
+| `gemini-3.5-flash` (ท้ายสุด) | 5 | 20 |
+
+ตัวที่โดน 429 จะถูกพักตามเวลาที่ Google บอกมาใน `RetryInfo` (ไม่บอกก็พัก 5 นาที)
+รอบถัดไปจึงข้ามไปเลยแทนที่จะยิงให้โดนซ้ำ · `waterInsight.model` บอกว่าข้อความ
+ที่ผู้ใช้เห็นมาจากตัวไหน
+
 สามอย่างที่พิสูจน์กับ API จริงมาแล้วและมี test กันไว้:
 
 - **ต้องปิด thinking** (`thinkingConfig.thinkingBudget = 0`) — Gemini 3.x เปิดไว้เป็น
@@ -150,7 +163,7 @@ PY
 | `MAX_QUERY_DEPTH` | `9` | เพดานความลึกของ query (`0` = ไม่บังคับ) |
 | `ENABLE_INTROSPECTION` | `false` | เปิดเฉพาะตอน dev |
 | `GEMINI_API_KEY` | ไม่มี | ไม่ตั้ง = `waterInsight` คืน null แล้วแอปใช้ข้อความสำรอง |
-| `GEMINI_MODEL` | `gemini-3.5-flash` | ทดสอบแล้ว `2.5-flash` ตอบ 404 กับ key ของ AI Studio |
+| `GEMINI_MODELS` | `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash` | ไล่ลองตามลำดับเมื่อตัวก่อนหน้าหมดโควตา |
 | `GEMINI_TIMEOUT` | `8s` | สั้นกว่า upstream เพราะผู้ใช้รอหน้าจออยู่ |
 | `AI_INSIGHT_CACHE_TTL` | `6h` | cache ตามลายนิ้วมือของตัวเลข ไม่ใช่ตามเวลา |
 | `UPSTREAM_TIMEOUT` | `10s` | timeout ตอนเรียก service |

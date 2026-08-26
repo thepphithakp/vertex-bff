@@ -85,14 +85,15 @@ func (s *Service) WaterInsight(ctx context.Context, f WaterFacts) (*Insight, err
 		return &hit, nil
 	}
 
-	text, err := s.gemini.Generate(ctx, systemPrompt, f.userPrompt())
+	// model ที่ตอบอาจไม่ใช่ตัวแรกในลำดับ ถ้าตัวหลักหมดโควตาไปแล้ว
+	text, model, err := s.gemini.Generate(ctx, systemPrompt, f.userPrompt())
 	if err != nil {
 		return nil, err
 	}
 
 	ins := Insight{
 		Text:        text,
-		Model:       s.gemini.Model(),
+		Model:       model,
 		GeneratedAt: s.now(),
 	}
 	s.put(key, ins)

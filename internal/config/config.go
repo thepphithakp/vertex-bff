@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -53,7 +54,12 @@ type Config struct {
 	// แล้วแอปตกกลับไปใช้ข้อความ rule-based เดิม — service ยัง start ได้ปกติ
 	// เพราะนี่เป็นของเสริม ไม่ใช่ dependency ที่ขาดไม่ได้
 	GeminiAPIKey string
-	GeminiModel  string
+	// GeminiModels เรียงตามลำดับที่จะลอง ตัวแรกคือตัวหลัก
+	//
+	// โมเดลแต่ละตัวมีโควตาแยกก้อนกัน การไล่ลองจึงเพิ่มจำนวนครั้งที่ใช้ได้จริง
+	// ไม่ใช่แค่กันพลาด — flash-lite ได้ 15 RPM / 500 RPD ส่วน 3.5-flash
+	// ได้ 5 RPM / 20 RPD ต่างกัน 25 เท่าต่อวัน
+	GeminiModels []string
 	// timeout สั้นกว่า UpstreamTimeout เพราะผู้ใช้รอหน้าจออยู่
 	// ยอมไม่มีคำวิเคราะห์ดีกว่าให้ทั้งหน้าค้างรอ LLM
 	GeminiTimeout time.Duration
@@ -73,7 +79,7 @@ func Load() (Config, error) {
 		MaxQueryComplexity:  envInt("MAX_QUERY_COMPLEXITY", 5000),
 		EnableIntrospection: envBool("ENABLE_INTROSPECTION", false),
 		GeminiAPIKey:        env("GEMINI_API_KEY", ""),
-		GeminiModel:         env("GEMINI_MODEL", "gemini-3.5-flash"),
+		GeminiModels:        envList("GEMINI_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash"),
 		GeminiTimeout:       envDuration("GEMINI_TIMEOUT", 8*time.Second),
 		AIInsightCacheTTL:   envDuration("AI_INSIGHT_CACHE_TTL", 6*time.Hour),
 	}
@@ -89,6 +95,19 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// envList แยกด้วยคอมมา ใช้กับลำดับโมเดลของ Gemini
+func envList(k, def string) []string {
+	v := env(k, def)
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envInt(k string, def int) int {

@@ -55,8 +55,15 @@ graphql:
 ai:
   secretName: gemini-api-key
   secretKey: GEMINI_API_KEY
-  # ทดสอบกับ key จริงแล้ว: 2.5-flash ตอบ 404 ส่วน 3.5-flash ใช้ได้และตอบใน ~2 วินาที
-  model: gemini-3.5-flash
+  # ไล่ลองตามลำดับ ตัวแรกคือตัวหลัก — โควตาของ free tier แยกก้อนต่อโมเดล
+  # การมีหลายตัวจึงเพิ่มจำนวนครั้งที่ใช้ได้จริง ไม่ใช่แค่กันพลาด
+  #
+  #   flash-lite   15 RPM / 500 RPD
+  #   3.5-flash     5 RPM /  20 RPD   ← เอาไว้ท้ายสุด
+  #
+  # ทดสอบกับ key จริงแล้ว: 2.5-flash ตอบ 404 จึงไม่อยู่ในลำดับ
+  # ส่วน lite ตอบเร็วกว่า (1.5 วินาที เทียบกับ 2.3) และคุณภาพพอกัน
+  models: gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-3.5-flash
   # สั้นกว่า upstream timeout เพราะผู้ใช้รอหน้าจออยู่
   # ยอมไม่มีคำวิเคราะห์ ดีกว่าให้ทั้งหน้าค้างรอ LLM
   timeout: 8s

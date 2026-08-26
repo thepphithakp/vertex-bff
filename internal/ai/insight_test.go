@@ -17,7 +17,7 @@ func fakeGemini(t *testing.T, h http.HandlerFunc) (*Gemini, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	g := NewGemini("test-key", "gemini-test", 5*time.Second)
+	g := NewGemini("test-key", []string{"gemini-test"}, 5*time.Second)
 	g.endpoint = srv.URL
 	return g, srv
 }
@@ -45,7 +45,7 @@ func sampleFacts() WaterFacts {
 }
 
 func TestNoAPIKeyReportsDisabledInsteadOfFailing(t *testing.T) {
-	s := NewService(NewGemini("", "gemini-test", time.Second), time.Hour)
+	s := NewService(NewGemini("", []string{"gemini-test"}, time.Second), time.Hour)
 
 	if s.Enabled() {
 		t.Fatal("ไม่มี key แล้วยังบอกว่าเปิดใช้อยู่")
@@ -241,5 +241,133 @@ func TestPromptCarriesNoIdentifiers(t *testing.T) {
 	}
 	if !strings.Contains(body, "ห้ามวินิจฉัยโรค") {
 		t.Error("system prompt ต้องห้ามโมเดลวินิจฉัยโรค")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// การสลับโมเดลอัตโนมัติเมื่อโดนเพดาน (โควตาของ free tier แยกก้อนต่อโมเดล)
+// ---------------------------------------------------------------------------
+
+func quotaResponse(retryDelay string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		body := `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"`
+		if retryDelay != "" {
+			body += `,"details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"` + retryDelay + `"}]`
+		}
+		body += `}}`
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+// เส้นทางหลักของ feature นี้ — ตัวหลักหมดโควตาแล้วต้องได้คำตอบจากตัวสำรอง
+// ไม่ใช่ตกไปใช้ข้อความ rule-based ทั้งที่ยังมีโมเดลอื่นเหลืออยู่
+func TestFallsBackToNextModelOnQuota(t *testing.T) {
+	var tried []string
+	g, _ := fakeGemini(t, func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/models/"), ":generateContent")
+		tried = append(tried, model)
+		if model == "primary" {
+			quotaResponse("26s")(w, r)
+			return
+		}
+		okResponse("จากตัวสำรอง")(w, r)
+	})
+	g.models = []string{"primary", "backup"}
+	s := NewService(g, time.Hour)
+
+	ins, err := s.WaterInsight(context.Background(), sampleFacts())
+	if err != nil {
+		t.Fatalf("ควรได้คำตอบจากตัวสำรอง แต่ได้ error: %v", err)
+	}
+	if ins.Model != "backup" {
+		t.Errorf("model ที่ตอบ = %q ควรเป็น backup", ins.Model)
+	}
+	if len(tried) != 2 || tried[0] != "primary" {
+		t.Errorf("ลำดับที่ลอง = %v ควรลองตัวหลักก่อน", tried)
+	}
+}
+
+// ตัวที่เพิ่งโดนเพดานต้องถูกข้ามไปเลย ไม่ใช่ยิงให้โดน 429 ซ้ำทุกครั้ง
+func TestSkipsModelStillCoolingDown(t *testing.T) {
+	var tried []string
+	g, _ := fakeGemini(t, func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/models/"), ":generateContent")
+		tried = append(tried, model)
+		if model == "primary" {
+			quotaResponse("60s")(w, r)
+			return
+		}
+		okResponse("ok")(w, r)
+	})
+	g.models = []string{"primary", "backup"}
+	s := NewService(g, time.Hour)
+
+	f := sampleFacts()
+	if _, err := s.WaterInsight(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	// เปลี่ยนตัวเลขให้ cache ไม่ช่วย จะได้ยิงจริงอีกรอบ
+	f.TodayMl += 80
+	if _, err := s.WaterInsight(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, m := range tried[1:] {
+		if m == "primary" {
+			t.Fatalf("ยิงซ้ำไปที่ตัวที่ยัง cooldown อยู่: %v", tried)
+		}
+	}
+}
+
+func TestAllModelsExhaustedReportsQuota(t *testing.T) {
+	g, _ := fakeGemini(t, quotaResponse("30s"))
+	g.models = []string{"a", "b", "c"}
+	s := NewService(g, time.Hour)
+
+	_, err := s.WaterInsight(context.Background(), sampleFacts())
+	if err != ErrQuota {
+		t.Fatalf("อยากได้ ErrQuota แต่ได้ %v", err)
+	}
+}
+
+// 404 เจอจริงกับ gemini-2.5-flash ที่มีชื่อในรายการ models แต่เรียกไม่ได้
+func TestFallsBackWhenModelNotFound(t *testing.T) {
+	g, _ := fakeGemini(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "missing") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":404,"message":"model not found"}}`))
+			return
+		}
+		okResponse("ok")(w, r)
+	})
+	g.models = []string{"missing", "works"}
+	s := NewService(g, time.Hour)
+
+	ins, err := s.WaterInsight(context.Background(), sampleFacts())
+	if err != nil {
+		t.Fatalf("ควรข้ามไปตัวถัดไป แต่ได้ error: %v", err)
+	}
+	if ins.Model != "works" {
+		t.Errorf("model ที่ตอบ = %q", ins.Model)
+	}
+}
+
+// prompt ที่ถูกบล็อกจะโดนเหมือนกันทุกโมเดล ยิงต่อก็เปลืองโควตาเปล่า
+func TestBlockedPromptDoesNotBurnOtherModels(t *testing.T) {
+	calls := 0
+	g, _ := fakeGemini(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"promptFeedback":{"blockReason":"SAFETY"}}`))
+	})
+	g.models = []string{"a", "b", "c"}
+	s := NewService(g, time.Hour)
+
+	if _, err := s.WaterInsight(context.Background(), sampleFacts()); err == nil {
+		t.Fatal("ควรได้ error")
+	}
+	if calls != 1 {
+		t.Fatalf("ยิงไป %d ครั้ง ควรหยุดที่ตัวแรก", calls)
 	}
 }

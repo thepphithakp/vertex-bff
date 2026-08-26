@@ -49,8 +49,8 @@ spec:
               value: {{ .Values.graphql.maxDepth | quote }}
             - name: ENABLE_INTROSPECTION
               value: {{ .Values.graphql.enableIntrospection | quote }}
-            - name: GEMINI_MODEL
-              value: {{ .Values.ai.model | quote }}
+            - name: GEMINI_MODELS
+              value: {{ .Values.ai.models | quote }}
             - name: GEMINI_TIMEOUT
               value: {{ .Values.ai.timeout | quote }}
             - name: AI_INSIGHT_CACHE_TTL

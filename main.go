@@ -49,10 +49,10 @@ func main() {
 	var insightSvc *ai.Service
 	if cfg.GeminiAPIKey != "" {
 		insightSvc = ai.NewService(
-			ai.NewGemini(cfg.GeminiAPIKey, cfg.GeminiModel, cfg.GeminiTimeout),
+			ai.NewGemini(cfg.GeminiAPIKey, cfg.GeminiModels, cfg.GeminiTimeout),
 			cfg.AIInsightCacheTTL,
 		)
-		slog.Info("เปิดใช้คำวิเคราะห์ด้วย LLM", "model", cfg.GeminiModel,
+		slog.Info("เปิดใช้คำวิเคราะห์ด้วย LLM", "models", cfg.GeminiModels,
 			"cache_ttl", cfg.AIInsightCacheTTL.String())
 	} else {
 		slog.Info("ไม่ได้ตั้ง GEMINI_API_KEY — waterInsight จะคืน null และแอปจะใช้ข้อความสำรอง")

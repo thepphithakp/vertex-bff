@@ -16,40 +16,70 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 const defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta"
 
+// cooldown ที่ใช้เมื่อ Gemini ไม่ได้บอก retryDelay มาด้วย
+//
+// เดา 5 นาทีเพราะเพดานของ free tier มีทั้งแบบต่อนาทีและต่อวัน ถ้าเป็นแบบต่อวัน
+// การลองใหม่เร็วกว่านี้ก็เสียเที่ยวเปล่า แต่ไม่ได้ทำให้อะไรพัง เพราะสุดท้าย
+// มีโมเดลถัดไปกับข้อความสำรองรออยู่
+const defaultCooldown = 5 * time.Minute
+
 // ErrDisabled คือกรณีที่ยังไม่ได้ตั้ง API key — ไม่ใช่ความผิดพลาด
 // เป็นสถานะปกติของ environment ที่ยังไม่เปิดใช้ feature นี้
 var ErrDisabled = errors.New("ai: ไม่ได้ตั้ง GEMINI_API_KEY จึงยังไม่เปิดใช้")
 
-// ErrQuota แยกจาก error อื่นเพราะ free tier มีเพดานต่อนาทีและต่อวัน
-// การรู้ว่าโดน quota ต่างจาก key ผิดทำให้ดู log แล้ววินิจฉัยได้เร็ว
-var ErrQuota = errors.New("ai: เกิน quota ของ Gemini")
+// ErrQuota แปลว่าลองครบทุกโมเดลที่ตั้งไว้แล้วโดนเพดานหมด
+//
+// แยกจาก error อื่นเพราะเวลาอ่าน log แล้ว "หมดโควตา" กับ "key ผิด"
+// เป็นคนละเรื่องกันโดยสิ้นเชิงเวลาต้องไปแก้
+var ErrQuota = errors.New("ai: เกิน quota ของ Gemini ครบทุกโมเดลที่ตั้งไว้")
 
 type Gemini struct {
-	apiKey   string
-	model    string
+	apiKey string
+
+	// models เรียงตามลำดับที่จะลอง ตัวแรกคือตัวหลัก
+	//
+	// โมเดลแต่ละตัวมีโควตาแยกก้อนกัน การมีหลายตัวจึงเพิ่มจำนวนครั้งที่ใช้ได้จริง
+	// ไม่ใช่แค่กันพลาด — flash-lite ได้ 15 RPM / 500 RPD ส่วน 3.5-flash ได้
+	// 5 RPM / 20 RPD ต่างกัน 25 เท่าต่อวัน
+	models   []string
 	endpoint string
 	http     *http.Client
+
+	mu       sync.Mutex
+	coolDown map[string]time.Time
+	now      func() time.Time
 }
 
-func NewGemini(apiKey, model string, timeout time.Duration) *Gemini {
+func NewGemini(apiKey string, models []string, timeout time.Duration) *Gemini {
+	cleaned := make([]string, 0, len(models))
+	for _, m := range models {
+		if m = strings.TrimSpace(m); m != "" {
+			cleaned = append(cleaned, m)
+		}
+	}
 	return &Gemini{
 		apiKey:   strings.TrimSpace(apiKey),
-		model:    model,
+		models:   cleaned,
 		endpoint: defaultEndpoint,
 		http:     &http.Client{Timeout: timeout},
+		coolDown: make(map[string]time.Time),
+		now:      time.Now,
 	}
 }
 
-func (g *Gemini) Enabled() bool { return g != nil && g.apiKey != "" }
+func (g *Gemini) Enabled() bool { return g != nil && g.apiKey != "" && len(g.models) > 0 }
 
-func (g *Gemini) Model() string { return g.model }
+// Models คืนลำดับที่ตั้งไว้ ใช้ตอนเขียน log ตอน service start
+func (g *Gemini) Models() []string { return g.models }
 
 type generateRequest struct {
 	Contents          []content        `json:"contents"`
@@ -87,18 +117,107 @@ type generateResponse struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 		Status  string `json:"status"`
+		Details []struct {
+			Type       string `json:"@type"`
+			RetryDelay string `json:"retryDelay"`
+		} `json:"details"`
 	} `json:"error"`
 }
 
-// Generate ส่ง prompt ไปให้ Gemini แล้วคืนข้อความล้วน
+// Generate ไล่ลองโมเดลตามลำดับจนกว่าจะมีตัวใดตัวหนึ่งตอบ
 //
-// systemPrompt แยกจาก userPrompt เพราะ Gemini ให้น้ำหนักกับ systemInstruction
-// ต่างจากข้อความปกติ — กติกาที่ห้ามละเมิด (ห้ามวินิจฉัยโรค) จึงอยู่ตรงนั้น
-func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+// คืนชื่อโมเดลที่ตอบจริงมาด้วย เพราะข้อความที่ผู้ใช้เห็นอาจมาจากตัวสำรอง
+// เวลาสำนวนเปลี่ยนไปจะได้ตอบได้ว่ามาจากไหน
+func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) (string, string, error) {
 	if !g.Enabled() {
-		return "", ErrDisabled
+		return "", "", ErrDisabled
 	}
 
+	var (
+		attempted int
+		quotaHit  bool
+		lastErr   error
+	)
+
+	for _, m := range g.models {
+		// ตัวที่เพิ่งโดนเพดานไปข้ามไปเลย ไม่ต้องเสียเวลายิงให้โดน 429 ซ้ำ
+		if g.cooling(m) {
+			continue
+		}
+		attempted++
+
+		text, err := g.generateWith(ctx, m, systemPrompt, userPrompt)
+		if err == nil {
+			return text, m, nil
+		}
+		lastErr = err
+
+		var qe *quotaError
+		if errors.As(err, &qe) {
+			quotaHit = true
+			g.markCooling(m, qe.retryAfter)
+			slog.WarnContext(ctx, "โมเดลหมดโควตา สลับไปตัวถัดไป",
+				"model", m, "cooldown", g.cooldownOf(m).String())
+			continue
+		}
+
+		// 404 (โมเดลนี้ใช้กับ key นี้ไม่ได้) และ 5xx ลองตัวถัดไปมีโอกาสรอด
+		// ส่วน prompt ที่ถูกบล็อกจะโดนเหมือนกันทุกตัว ไม่ต้องลองต่อ
+		if !worthRetryingOnNextModel(err) {
+			return "", "", err
+		}
+		slog.WarnContext(ctx, "โมเดลใช้ไม่ได้ สลับไปตัวถัดไป", "model", m, "error", err.Error())
+	}
+
+	// ไม่ได้ยิงเลยเพราะทุกตัวยัง cooldown อยู่ ก็นับเป็นหมดโควตาเหมือนกัน
+	if attempted == 0 || quotaHit {
+		return "", "", ErrQuota
+	}
+	return "", "", lastErr
+}
+
+type quotaError struct {
+	retryAfter time.Duration
+}
+
+func (e *quotaError) Error() string {
+	return fmt.Sprintf("ai: เกิน quota (Google บอกให้รอ %s)", e.retryAfter)
+}
+
+// retryableError คือความผิดพลาดที่ "ลองโมเดลอื่นแล้วอาจรอด"
+type retryableError struct{ err error }
+
+func (e *retryableError) Error() string { return e.err.Error() }
+func (e *retryableError) Unwrap() error { return e.err }
+
+func worthRetryingOnNextModel(err error) bool {
+	var re *retryableError
+	return errors.As(err, &re)
+}
+
+func (g *Gemini) cooling(model string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	until, ok := g.coolDown[model]
+	return ok && g.now().Before(until)
+}
+
+func (g *Gemini) markCooling(model string, d time.Duration) {
+	if d <= 0 {
+		d = defaultCooldown
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.coolDown[model] = g.now().Add(d)
+}
+
+func (g *Gemini) cooldownOf(model string) time.Duration {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.coolDown[model].Sub(g.now())
+}
+
+func (g *Gemini) generateWith(ctx context.Context, model, systemPrompt, userPrompt string) (string, error) {
 	body, err := json.Marshal(generateRequest{
 		Contents:          []content{{Parts: []part{{Text: userPrompt}}}},
 		SystemInstruction: &content{Parts: []part{{Text: systemPrompt}}},
@@ -109,10 +228,10 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 			// การ์ดบนมือถือกว้างไม่กี่บรรทัด ยาวกว่านี้ก็อ่านไม่จบ
 			// ตั้งเผื่อไว้เพราะภาษาไทยกินโทเคนต่อตัวอักษรมากกว่าอังกฤษ
 			MaxOutputTokens: 1024,
-			// ⚠️ ปิด thinking — Gemini 3.x เปิดไว้เป็นค่าเริ่มต้นและ
-			// โทเคนที่ใช้คิดถูกหักจาก MaxOutputTokens ก้อนเดียวกัน
-			// ทดสอบแล้วเจอจริง: ตอบมาแค่ 12 โทเคนแล้วตัดกลางประโยคว่า
-			// "วันนี้น้องมะลิเพิ่งดื่มน้ำไปได้ 9" โดย finishReason ไม่ได้บอกว่าโดนตัด
+			// ⚠️ ปิด thinking — Gemini 3.x เปิดไว้เป็นค่าเริ่มต้นและโทเคนที่ใช้คิด
+			// ถูกหักจาก MaxOutputTokens ก้อนเดียวกัน ทดสอบแล้วเจอจริง:
+			// ตอบมาแค่ 12 โทเคนแล้วตัดกลางประโยคว่า "วันนี้น้องมะลิเพิ่งดื่มน้ำไปได้ 9"
+			// โดย finishReason ไม่ได้บอกว่าโดนตัด
 			// งานนี้เป็นการสรุปตัวเลขไม่กี่ตัว ไม่ต้องใช้ reasoning ยาวๆ อยู่แล้ว
 			ThinkingConfig: thinkingConfig{ThinkingBudget: 0},
 		},
@@ -121,7 +240,7 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 		return "", fmt.Errorf("ai: ประกอบ request ไม่ได้: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/models/%s:generateContent", g.endpoint, g.model)
+	url := fmt.Sprintf("%s/models/%s:generateContent", g.endpoint, model)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("ai: สร้าง request ไม่ได้: %w", err)
@@ -133,32 +252,37 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 
 	resp, err := g.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("ai: เรียก Gemini ไม่สำเร็จ: %w", err)
+		// network สะดุดตอนคุยกับโมเดลนี้ ลองตัวถัดไปได้
+		return "", &retryableError{fmt.Errorf("ai: เรียก %s ไม่สำเร็จ: %w", model, err)}
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", fmt.Errorf("ai: อ่าน response ไม่ได้: %w", err)
-	}
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return "", ErrQuota
+		return "", &retryableError{fmt.Errorf("ai: อ่าน response ของ %s ไม่ได้: %w", model, err)}
 	}
 
 	var out generateResponse
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", fmt.Errorf("ai: response ไม่ใช่ JSON ที่อ่านได้ (status %d)", resp.StatusCode)
+	if jsonErr := json.Unmarshal(raw, &out); jsonErr != nil && resp.StatusCode == http.StatusOK {
+		return "", fmt.Errorf("ai: response ของ %s ไม่ใช่ JSON ที่อ่านได้", model)
+	}
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return "", &quotaError{retryAfter: out.retryDelay()}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// ข้อความจาก Google บอกสาเหตุตรงๆ (key ผิด, model ไม่มี, ฯลฯ)
-		// เก็บไว้ใน error เพื่อให้ log บอกได้ว่าต้องไปแก้อะไร
 		msg := out.Error.Message
 		if msg == "" {
 			msg = strings.TrimSpace(string(raw))
 		}
-		return "", fmt.Errorf("ai: Gemini ตอบ %d: %s", resp.StatusCode, msg)
+		httpErr := fmt.Errorf("ai: %s ตอบ %d: %s", model, resp.StatusCode, msg)
+		// 404 เจอจริงกับ gemini-2.5-flash ที่มีชื่อในรายการ models แต่เรียกไม่ได้
+		// 5xx เป็นฝั่ง Google เอง — ทั้งสองแบบลองตัวถัดไปมีโอกาสรอด
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode >= 500 {
+			return "", &retryableError{httpErr}
+		}
+		return "", httpErr
 	}
 
 	if out.PromptFeedback.BlockReason != "" {
@@ -173,7 +297,23 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 	}
 	text := strings.TrimSpace(b.String())
 	if text == "" {
-		return "", errors.New("ai: Gemini ตอบกลับมาว่างเปล่า")
+		return "", &retryableError{fmt.Errorf("ai: %s ตอบกลับมาว่างเปล่า", model)}
 	}
 	return text, nil
+}
+
+// retryDelay อ่านเวลาที่ Google บอกว่าให้รอก่อนลองใหม่
+//
+// มากับ error details เป็น RetryInfo เช่น "26s" ใช้ค่านี้ดีกว่าเดาเอง
+// เพราะเพดานต่อนาทีกับต่อวันมีเวลารอต่างกันมาก
+func (r generateResponse) retryDelay() time.Duration {
+	for _, d := range r.Error.Details {
+		if d.RetryDelay == "" {
+			continue
+		}
+		if v, err := time.ParseDuration(d.RetryDelay); err == nil {
+			return v
+		}
+	}
+	return 0
 }
