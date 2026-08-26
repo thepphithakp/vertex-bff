@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -277,4 +279,46 @@ func schemaMaxDepth(schema *ast.Schema, def *ast.Definition) (int, []string) {
 	}
 
 	return walk(def, nil)
+}
+
+// TestRejectedQueriesAppearInLog — ของที่โดนกันต้องตามหาใน Kibana ได้
+//
+// ตอนแรกใช้ extension.FixedComplexityLimit ซึ่งเป็น OperationContextMutator
+// รันก่อน middleware ทุกตัว query ที่โดนมันปฏิเสธจึงไม่มีบรรทัดไหนใน log เลย
+// ยืนยันแล้วบน production ว่า query Evil ที่ถูกปฏิเสธไม่โผล่ใน log จริงๆ
+//
+// กันได้แต่ไม่รู้ว่าโดนกันบ่อยแค่ไหนหรือมาจากไหน แทบไม่ต่างจากไม่ได้กัน
+func TestRejectedQueriesAppearInLog(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f := newFakeUpstream(t)
+	h := newTestServerWith(t, f, guardrailCfg(defaultDepth, defaultComplexity))
+
+	execute(t, h, `query TooExpensive {
+		admin { pets(first: 200) { edges { node { caregivers { user { id } } } } } }
+	}`, "token")
+
+	execute(t, h, `query TooDeepToLog { pet(id: "pet-1") { caregivers { user { id } } } }`, "token")
+
+	logged := buf.String()
+	for _, want := range []string{
+		`"operation":"TooExpensive"`,
+		`"rejected":"complexity"`,
+		`"complexity":12411`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("log ต้องมี %s แต่ไม่มี\nlog=%s", want, logged)
+		}
+	}
+
+	// อันนี้ลึกแค่ 4 ชั้น ไม่เกินเพดาน 9 จึงต้องผ่านและถูก log แบบปกติ
+	if !strings.Contains(logged, `"operation":"TooDeepToLog"`) {
+		t.Errorf("query ปกติต้องถูก log ด้วย\nlog=%s", logged)
+	}
+	if strings.Contains(logged, `"depth":0`) {
+		t.Errorf("ทุกบรรทัดต้องมีความลึกที่คำนวณได้จริง ไม่ใช่ 0\nlog=%s", logged)
+	}
 }

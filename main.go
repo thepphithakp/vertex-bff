@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/99designs/gqlgen/complexity"
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
@@ -91,27 +92,21 @@ func main() {
 
 func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Server {
 	maxDepth := cfg.MaxQueryDepth
+	maxComplexity := cfg.MaxQueryComplexity
 
-	srv := handler.New(graph.NewExecutableSchema(graph.Config{
+	es := graph.NewExecutableSchema(graph.Config{
 		Resolvers: resolver,
 		// ราคาต่อ field — ถ้าไม่ตั้ง gqlgen คิดทุก field เท่ากับ 1 เท่ากันหมด
 		// ทำให้ query ที่ขอ list ใหญ่ซ้อนกันราคาถูกเท่ากับ query เล็กๆ (VT-99)
 		Complexity: graph.NewComplexityRoot(),
-	}))
+	})
+	srv := handler.New(es)
 
 	srv.AddTransport(transport.POST{})
 	srv.AddTransport(transport.GET{})
 	srv.SetQueryCache(lru.New[*ast.QueryDocument](200))
 
 	srv.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](100)})
-
-	// ---------------------------------------------------------------------
-	// เพดานความแพงของ query
-	// ---------------------------------------------------------------------
-	// rate limiter ที่นับจำนวน request ใช้กับ GraphQL แทบไม่ได้ผล
-	// เพราะหนึ่ง request แพงเท่าไหร่ก็ได้ ยิง query ซ้อนลึกครั้งเดียว
-	// ก็ทำให้ resolver ระเบิดเป็นพันครั้งได้ และ endpoint นี้เปิดออกเน็ต
-	srv.Use(extension.FixedComplexityLimit(cfg.MaxQueryComplexity))
 
 	if cfg.EnableIntrospection {
 		srv.Use(extension.Introspection{})
@@ -135,12 +130,21 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 
 		depth := graph.SelectionDepth(oc.Operation)
 
+		// คิดราคาไว้ก่อนเสมอแม้จะไม่เกินเพดาน เพื่อให้ทุกบรรทัดใน log มีตัวเลขนี้
+		// จะได้ปรับเพดานจากข้อมูลจริงว่า query ที่แพงที่สุดของแอปราคาเท่าไหร่
+		// แทนที่จะเดาแล้วมารู้ตอนผู้ใช้โดนบล็อก
+		cost := 0
+		if oc.Operation != nil {
+			cost = complexity.Calculate(ctx, es, oc.Operation, oc.Variables)
+		}
+
 		// log ทุกกรณีรวมถึงที่ถูกปฏิเสธ — ของที่โดนกันคือของที่อยากเห็นที่สุด
 		done := func(r *graphql.Response, rejected string) *graphql.Response {
 			attrs := []any{
 				"endpoint", "graphql/" + orUnnamed(name),
 				"operation", orUnnamed(name),
 				"depth", depth,
+				"complexity", cost,
 				"latency", time.Since(start),
 				"request_id", client.RequestIDFrom(ctx),
 				"errors", len(r.Errors),
@@ -161,12 +165,11 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 		// ---------------------------------------------------------------
 		// เพดานความลึก
 		// ---------------------------------------------------------------
-		// ปฏิเสธตรงนี้คือก่อนเริ่ม resolve ตัว document ผ่าน parse กับ validate
+		// ปฏิเสธตรงนี้คือก่อนเริ่ม resolve — document ผ่าน parse กับ validate
 		// มาแล้วแต่ยังไม่มี resolver ตัวไหนถูกเรียก
 		//
-		// complexity limit อย่างเดียวไม่พอ เพราะมันวัด "กว้าง" ส่วน query ที่
-		// ซ้อนวนผ่าน caregiver → user → pets → caregiver ขอ field น้อยมาก
-		// ในแต่ละชั้นแต่ทำให้ resolver ระเบิดเป็นทอดๆ
+		// เพดานความแพงอย่างเดียวไม่พอ เพราะมันวัดความ "กว้าง" ส่วน query ที่
+		// ซ้อนวนเป็นทอดๆ ขอ field น้อยมากในแต่ละชั้นแต่ทำให้ resolver ระเบิด
 		if maxDepth > 0 && depth > maxDepth {
 			err := gqlerror.Errorf("query ซ้อนลึก %d ชั้น เกินเพดานที่ %d ชั้น", depth, maxDepth)
 			err.Extensions = map[string]any{
@@ -175,6 +178,26 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 				"maxDepth": maxDepth,
 			}
 			return graphql.OneShot(done(&graphql.Response{Errors: gqlerror.List{err}}, "depth"))
+		}
+
+		// ---------------------------------------------------------------
+		// เพดานความแพง
+		// ---------------------------------------------------------------
+		// คิดเองแทนที่จะใช้ extension.FixedComplexityLimit เพราะ extension นั้น
+		// เป็น OperationContextMutator ซึ่งรันก่อน middleware ทุกตัว query ที่
+		// ถูกมันปฏิเสธจึงไม่เคยผ่านมาถึงตรงนี้ แปลว่าไม่มีบรรทัดไหนใน log เลย
+		// (ยืนยันบน production แล้วว่า query ที่โดนกันหายไปจาก log จริงๆ)
+		//
+		// ของที่โดนกันคือของที่อยากเห็นใน Kibana มากที่สุด กันได้แต่ไม่รู้ว่า
+		// โดนกันบ่อยแค่ไหนหรือมาจากไหน แทบไม่ต่างจากไม่ได้กัน
+		if maxComplexity > 0 && cost > maxComplexity {
+			err := gqlerror.Errorf("query มีความแพง %d เกินเพดานที่ %d", cost, maxComplexity)
+			err.Extensions = map[string]any{
+				"code":          "COMPLEXITY_LIMIT_EXCEEDED",
+				"complexity":    cost,
+				"maxComplexity": maxComplexity,
+			}
+			return graphql.OneShot(done(&graphql.Response{Errors: gqlerror.List{err}}, "complexity"))
 		}
 
 		resp := next(ctx)
