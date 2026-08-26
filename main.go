@@ -90,7 +90,14 @@ func main() {
 }
 
 func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Server {
-	srv := handler.New(graph.NewExecutableSchema(graph.Config{Resolvers: resolver}))
+	maxDepth := cfg.MaxQueryDepth
+
+	srv := handler.New(graph.NewExecutableSchema(graph.Config{
+		Resolvers: resolver,
+		// ราคาต่อ field — ถ้าไม่ตั้ง gqlgen คิดทุก field เท่ากับ 1 เท่ากันหมด
+		// ทำให้ query ที่ขอ list ใหญ่ซ้อนกันราคาถูกเท่ากับ query เล็กๆ (VT-99)
+		Complexity: graph.NewComplexityRoot(),
+	}))
 
 	srv.AddTransport(transport.POST{})
 	srv.AddTransport(transport.GET{})
@@ -117,6 +124,7 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 	// แล้วความสามารถกรองตาม endpoint ที่ทำไว้ใน VT-71 จะไร้ความหมาย
 	srv.AroundOperations(func(ctx context.Context, next graphql.OperationHandler) graphql.ResponseHandler {
 		oc := graphql.GetOperationContext(ctx)
+		start := time.Now()
 
 		// OperationName คือค่าที่ client ส่งมาใน request ซึ่งมักไม่ส่งมา
 		// ชื่อจริงอยู่ในตัว document ที่ parse แล้ว ต้องอ่านจากตรงนั้น
@@ -124,23 +132,54 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 		if name == "" && oc.Operation != nil {
 			name = oc.Operation.Name
 		}
-		if name == "" {
-			// ปฏิเสธ query ที่ไม่มีชื่อ ไม่งั้นจะมี request ที่ระบุไม่ได้ว่ามาจากไหน
-			return graphql.OneShot(graphql.ErrorResponse(ctx,
-				"ทุก operation ต้องตั้งชื่อ เพื่อให้ตามหาใน log ได้ว่ามาจากหน้าไหน"))
-		}
-		start := time.Now()
-		resp := next(ctx)
-		return func(ctx context.Context) *graphql.Response {
-			r := resp(ctx)
-			slog.Info("graphql_operation",
-				"endpoint", "graphql/"+name,
-				"operation", name,
+
+		depth := graph.SelectionDepth(oc.Operation)
+
+		// log ทุกกรณีรวมถึงที่ถูกปฏิเสธ — ของที่โดนกันคือของที่อยากเห็นที่สุด
+		done := func(r *graphql.Response, rejected string) *graphql.Response {
+			attrs := []any{
+				"endpoint", "graphql/" + orUnnamed(name),
+				"operation", orUnnamed(name),
+				"depth", depth,
 				"latency", time.Since(start),
 				"request_id", client.RequestIDFrom(ctx),
 				"errors", len(r.Errors),
-			)
+			}
+			if rejected != "" {
+				attrs = append(attrs, "rejected", rejected)
+			}
+			slog.Info("graphql_operation", attrs...)
 			return r
+		}
+
+		if name == "" {
+			// ปฏิเสธ query ที่ไม่มีชื่อ ไม่งั้นจะมี request ที่ระบุไม่ได้ว่ามาจากไหน
+			return graphql.OneShot(done(graphql.ErrorResponse(ctx,
+				"ทุก operation ต้องตั้งชื่อ เพื่อให้ตามหาใน log ได้ว่ามาจากหน้าไหน"), "anonymous"))
+		}
+
+		// ---------------------------------------------------------------
+		// เพดานความลึก
+		// ---------------------------------------------------------------
+		// ปฏิเสธตรงนี้คือก่อนเริ่ม resolve ตัว document ผ่าน parse กับ validate
+		// มาแล้วแต่ยังไม่มี resolver ตัวไหนถูกเรียก
+		//
+		// complexity limit อย่างเดียวไม่พอ เพราะมันวัด "กว้าง" ส่วน query ที่
+		// ซ้อนวนผ่าน caregiver → user → pets → caregiver ขอ field น้อยมาก
+		// ในแต่ละชั้นแต่ทำให้ resolver ระเบิดเป็นทอดๆ
+		if maxDepth > 0 && depth > maxDepth {
+			err := gqlerror.Errorf("query ซ้อนลึก %d ชั้น เกินเพดานที่ %d ชั้น", depth, maxDepth)
+			err.Extensions = map[string]any{
+				"code":     "DEPTH_LIMIT_EXCEEDED",
+				"depth":    depth,
+				"maxDepth": maxDepth,
+			}
+			return graphql.OneShot(done(&graphql.Response{Errors: gqlerror.List{err}}, "depth"))
+		}
+
+		resp := next(ctx)
+		return func(ctx context.Context) *graphql.Response {
+			return done(resp(ctx), "")
 		}
 	})
 
@@ -208,4 +247,13 @@ func accessLogMiddleware(c *fiber.Ctx) error {
 		"request_id", c.Locals("requestID"),
 	)
 	return err
+}
+
+// orUnnamed กัน field endpoint ใน log ว่างเปล่า จะได้กรองเจอว่ามี request
+// ที่ไม่มีชื่อเข้ามาบ่อยแค่ไหน
+func orUnnamed(name string) string {
+	if name == "" {
+		return "unnamed"
+	}
+	return name
 }

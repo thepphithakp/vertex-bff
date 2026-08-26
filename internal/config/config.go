@@ -25,6 +25,12 @@ type Config struct {
 	// MaxQueryDepth / MaxQueryComplexity กันคนยิง query ซ้อนลึกจนล้ม backend
 	// ดู VT-99 — endpoint นี้เปิดออกอินเทอร์เน็ต rate limit แบบนับ request
 	// ใช้ไม่ได้กับ GraphQL เพราะหนึ่ง request แพงเท่าไหร่ก็ได้
+	//
+	// สองตัวนี้กันคนละอย่าง ต้องมีทั้งคู่:
+	// depth กัน query ที่ซ้อนวนเป็นทอดๆ ส่วน complexity กัน query ที่ขอ list ใหญ่
+	// query ที่ลึกอาจราคาถูกมาก และ query ที่แพงมากอาจลึกแค่สามชั้น
+	//
+	// ตั้ง MaxQueryDepth เป็น 0 = ไม่บังคับ (ใช้ตอน debug ในเครื่องเท่านั้น)
 	MaxQueryDepth      int
 	MaxQueryComplexity int
 
@@ -41,7 +47,7 @@ func Load() (Config, error) {
 		PublicBaseURL:       env("PUBLIC_BASE_URL", ""),
 		UpstreamTimeout:     envDuration("UPSTREAM_TIMEOUT", 10*time.Second),
 		MaxQueryDepth:       envInt("MAX_QUERY_DEPTH", 12),
-		MaxQueryComplexity:  envInt("MAX_QUERY_COMPLEXITY", 1000),
+		MaxQueryComplexity:  envInt("MAX_QUERY_COMPLEXITY", 5000),
 		EnableIntrospection: envBool("ENABLE_INTROSPECTION", false),
 	}
 

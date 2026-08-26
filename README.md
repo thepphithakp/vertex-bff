@@ -61,6 +61,14 @@ service ตามที่ pet-service ตั้งใจไว้ และต�
 **ทุก operation ต้องมีชื่อ** เพราะชื่อจะถูกเขียนลง field `endpoint` ใน log
 ถ้าปล่อยให้ยิง anonymous query ได้ จะกรองใน Kibana ไม่ได้ว่า request มาจากหน้าไหน
 
+**เพดานของ query มีสองตัวและกันคนละอย่าง** `MAX_QUERY_DEPTH` กัน query ที่ซ้อนวน
+เป็นทอดๆ ซึ่งอาจราคาถูกมากแต่ทำให้ resolver ระเบิด ส่วน `MAX_QUERY_COMPLEXITY`
+กัน query ที่ขอ list ใหญ่ซ้อนกันซึ่งอาจลึกแค่สามชั้น มีตัวเดียวไม่พอ
+
+ราคาต่อ field อยู่ที่ `internal/graph/complexity.go` — field ที่เป็น list ต้อง
+**คูณ** ราคาของลูกด้วยจำนวนแถว ไม่ใช่บวก 1 ตามค่าเริ่มต้นของ gqlgen
+ใช้ `pageSize()` ตัวเดียวกับ resolver เพื่อให้ราคาตรงกับจำนวนแถวที่จะไปดึงจริง
+
 **การแบ่งวันใช้ timezone ของค่า `from`** ไม่ใช่ UTC และไม่ใช่ timezone ของ server
 เพราะ "วัน" ที่ผู้ใช้หมายถึงคือวันตามปฏิทินของเขา — ดู `dayKey` ใน
 `internal/graph/mapping.go` ที่มีบทเรียนของ [VT-105](https://thepphithakp.atlassian.net/browse/VT-105)
@@ -99,8 +107,8 @@ PY
 | `AUTH_SERVICE_URL` | `http://localhost:4000` | ปลายทาง auth-service |
 | `EVENT_SERVICE_URL` | `http://localhost:4002` | ปลายทาง event-service |
 | `PUBLIC_BASE_URL` | **ไม่มี — บังคับ** | ที่อยู่สาธารณะ ใช้ประกอบ `avatarUrl` |
-| `MAX_QUERY_COMPLEXITY` | `1000` | เพดานความแพงของ query |
-| `MAX_QUERY_DEPTH` | `12` | เพดานความลึกของ query |
+| `MAX_QUERY_COMPLEXITY` | `5000` | เพดานความแพงของ query |
+| `MAX_QUERY_DEPTH` | `12` | เพดานความลึกของ query (`0` = ไม่บังคับ) |
 | `ENABLE_INTROSPECTION` | `false` | เปิดเฉพาะตอน dev |
 | `UPSTREAM_TIMEOUT` | `10s` | timeout ตอนเรียก service |
 

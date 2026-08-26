@@ -27,11 +27,18 @@ upstream:
 publicBaseURL: ""
 
 graphql:
-  # เพดานความแพงของ query
-  #
-  # rate limit ที่นับจำนวน request ใช้กับ GraphQL แทบไม่ได้ผล
+  # เพดานของ query — rate limit ที่นับจำนวน request ใช้กับ GraphQL แทบไม่ได้ผล
   # เพราะหนึ่ง request แพงเท่าไหร่ก็ได้ และ endpoint นี้เปิดออกอินเทอร์เน็ต
-  maxComplexity: 1000
+  #
+  # ต้องมีทั้งสองตัวเพราะกันคนละอย่าง:
+  # maxDepth กัน query ที่ซ้อนวนเป็นทอดๆ (ลึกแต่อาจราคาถูก)
+  # maxComplexity กัน query ที่ขอ list ใหญ่ซ้อนกัน (แพงแต่อาจลึกแค่สามชั้น)
+  #
+  # 5000 เลือกจากการวัด query จริงของแอป — LitterDay ที่ขอ 200 แถวราคา 1221
+  # ส่วน query ที่ขอ 200 แถวแล้วซ้อน caregiver ต่อราคาเกินหมื่น
+  # ตั้งต่ำกว่านี้จะบล็อกผู้ใช้จริงก่อนบล็อกคนยิงถล่ม (ดู guardrail_test.go)
+  maxComplexity: 5000
+  # 0 = ไม่บังคับ ห้ามใช้บน production
   maxDepth: 12
   # ปิดบน production ไม่ให้ใครดึง schema ทั้งก้อนไปดู
   enableIntrospection: false

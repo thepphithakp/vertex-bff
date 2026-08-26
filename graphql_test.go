@@ -109,11 +109,16 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func newTestServer(t *testing.T, f *fakeUpstream) http.Handler {
 	t.Helper()
-	cfg := config.Config{
+	return newTestServerWith(t, f, config.Config{
 		PublicBaseURL:      "https://vertex.example",
 		UpstreamTimeout:    5 * time.Second,
 		MaxQueryComplexity: 1000,
-	}
+		MaxQueryDepth:      12,
+	})
+}
+
+func newTestServerWith(t *testing.T, f *fakeUpstream, cfg config.Config) http.Handler {
+	t.Helper()
 	pets := client.NewPetClient(f.srv.URL, cfg.UpstreamTimeout)
 	auth := client.NewAuthClient(f.srv.URL, cfg.UpstreamTimeout)
 	events := client.NewEventClient(f.srv.URL, cfg.UpstreamTimeout)
