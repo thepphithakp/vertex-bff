@@ -56,7 +56,16 @@ type Gemini struct {
 
 	mu       sync.Mutex
 	coolDown map[string]time.Time
-	now      func() time.Time
+	// noThinkingConfig จำว่าโมเดลไหนไม่รับ thinkingConfig
+	//
+	// gemini-3.5-flash-lite ตอบ 400 ถ้าส่งไปด้วย ส่วน 3.1-flash-lite กับ
+	// 3.5-flash รับได้ปกติ — เรียนเอาตอน runtime ดีกว่าเขียนรายชื่อไว้ใน code
+	// เพราะรายการโมเดลของ Google เปลี่ยนบ่อยกว่าที่เราจะตามแก้ไหว
+	//
+	// ปลอดภัยที่จะไม่ส่ง เพราะตัวที่ไม่รับคือตัวที่ไม่มี thinking ให้ปิดอยู่แล้ว
+	// (ทดสอบแล้ว lite ตอบครบประโยคโดยไม่ต้องปิดอะไร)
+	noThinkingConfig map[string]bool
+	now              func() time.Time
 }
 
 func NewGemini(apiKey string, models []string, timeout time.Duration) *Gemini {
@@ -67,12 +76,13 @@ func NewGemini(apiKey string, models []string, timeout time.Duration) *Gemini {
 		}
 	}
 	return &Gemini{
-		apiKey:   strings.TrimSpace(apiKey),
-		models:   cleaned,
-		endpoint: defaultEndpoint,
-		http:     &http.Client{Timeout: timeout},
-		coolDown: make(map[string]time.Time),
-		now:      time.Now,
+		apiKey:           strings.TrimSpace(apiKey),
+		models:           cleaned,
+		endpoint:         defaultEndpoint,
+		http:             &http.Client{Timeout: timeout},
+		coolDown:         make(map[string]time.Time),
+		noThinkingConfig: make(map[string]bool),
+		now:              time.Now,
 	}
 }
 
@@ -96,9 +106,10 @@ type part struct {
 }
 
 type generationConfig struct {
-	Temperature     float64        `json:"temperature"`
-	MaxOutputTokens int            `json:"maxOutputTokens"`
-	ThinkingConfig  thinkingConfig `json:"thinkingConfig"`
+	Temperature     float64 `json:"temperature"`
+	MaxOutputTokens int     `json:"maxOutputTokens"`
+	// pointer เพื่อให้ omitempty ตัดทิ้งได้จริงเมื่อโมเดลไม่รับ
+	ThinkingConfig *thinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type thinkingConfig struct {
@@ -146,7 +157,14 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 		}
 		attempted++
 
-		text, err := g.generateWith(ctx, m, systemPrompt, userPrompt)
+		text, err := g.generateWith(ctx, m, systemPrompt, userPrompt, g.wantsThinkingConfig(m))
+		if errors.Is(err, errThinkingConfigRejected) {
+			// โมเดลนี้ไม่รับ thinkingConfig — จำไว้แล้วลองใหม่ทันทีโดยไม่ส่ง
+			// ไม่นับเป็นความล้มเหลวของโมเดล เพราะเป็นเรื่องของ request ที่เราส่ง
+			g.markNoThinkingConfig(m)
+			slog.InfoContext(ctx, "โมเดลไม่รับ thinkingConfig ลองใหม่โดยไม่ส่ง", "model", m)
+			text, err = g.generateWith(ctx, m, systemPrompt, userPrompt, false)
+		}
 		if err == nil {
 			return text, m, nil
 		}
@@ -211,30 +229,50 @@ func (g *Gemini) markCooling(model string, d time.Duration) {
 	g.coolDown[model] = g.now().Add(d)
 }
 
+// errThinkingConfigRejected แยกจาก error 400 อื่น เพราะมีทางแก้ที่ชัดเจน
+// คือลองใหม่โดยไม่ส่ง field นั้น ไม่ใช่ยอมแพ้แล้วข้ามไปโมเดลอื่น
+var errThinkingConfigRejected = errors.New("ai: โมเดลนี้ไม่รับ thinkingConfig")
+
+func (g *Gemini) wantsThinkingConfig(model string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return !g.noThinkingConfig[model]
+}
+
+func (g *Gemini) markNoThinkingConfig(model string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.noThinkingConfig[model] = true
+}
+
 func (g *Gemini) cooldownOf(model string) time.Duration {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.coolDown[model].Sub(g.now())
 }
 
-func (g *Gemini) generateWith(ctx context.Context, model, systemPrompt, userPrompt string) (string, error) {
+func (g *Gemini) generateWith(ctx context.Context, model, systemPrompt, userPrompt string, withThinkingConfig bool) (string, error) {
+	cfg := generationConfig{
+		// ต่ำแต่ไม่ศูนย์ — อยากให้สำนวนเปลี่ยนบ้างในแต่ละวัน
+		// แต่ไม่อยากให้ตัวเลขหรือคำแนะนำแกว่ง
+		Temperature: 0.4,
+		// การ์ดบนมือถือกว้างไม่กี่บรรทัด ยาวกว่านี้ก็อ่านไม่จบ
+		// ตั้งเผื่อไว้เพราะภาษาไทยกินโทเคนต่อตัวอักษรมากกว่าอังกฤษ
+		MaxOutputTokens: 1024,
+		// ⚠️ ปิด thinking — Gemini 3.x เปิดไว้เป็นค่าเริ่มต้นและโทเคนที่ใช้คิด
+		// ถูกหักจาก MaxOutputTokens ก้อนเดียวกัน ทดสอบแล้วเจอจริง:
+		// ตอบมาแค่ 12 โทเคนแล้วตัดกลางประโยคว่า "วันนี้น้องมะลิเพิ่งดื่มน้ำไปได้ 9"
+		// โดย finishReason ไม่ได้บอกว่าโดนตัด
+		// งานนี้เป็นการสรุปตัวเลขไม่กี่ตัว ไม่ต้องใช้ reasoning ยาวๆ อยู่แล้ว
+	}
+	if withThinkingConfig {
+		cfg.ThinkingConfig = &thinkingConfig{ThinkingBudget: 0}
+	}
+
 	body, err := json.Marshal(generateRequest{
 		Contents:          []content{{Parts: []part{{Text: userPrompt}}}},
 		SystemInstruction: &content{Parts: []part{{Text: systemPrompt}}},
-		GenerationConfig: generationConfig{
-			// ต่ำแต่ไม่ศูนย์ — อยากให้สำนวนเปลี่ยนบ้างในแต่ละวัน
-			// แต่ไม่อยากให้ตัวเลขหรือคำแนะนำแกว่ง
-			Temperature: 0.4,
-			// การ์ดบนมือถือกว้างไม่กี่บรรทัด ยาวกว่านี้ก็อ่านไม่จบ
-			// ตั้งเผื่อไว้เพราะภาษาไทยกินโทเคนต่อตัวอักษรมากกว่าอังกฤษ
-			MaxOutputTokens: 1024,
-			// ⚠️ ปิด thinking — Gemini 3.x เปิดไว้เป็นค่าเริ่มต้นและโทเคนที่ใช้คิด
-			// ถูกหักจาก MaxOutputTokens ก้อนเดียวกัน ทดสอบแล้วเจอจริง:
-			// ตอบมาแค่ 12 โทเคนแล้วตัดกลางประโยคว่า "วันนี้น้องมะลิเพิ่งดื่มน้ำไปได้ 9"
-			// โดย finishReason ไม่ได้บอกว่าโดนตัด
-			// งานนี้เป็นการสรุปตัวเลขไม่กี่ตัว ไม่ต้องใช้ reasoning ยาวๆ อยู่แล้ว
-			ThinkingConfig: thinkingConfig{ThinkingBudget: 0},
-		},
+		GenerationConfig:  cfg,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai: ประกอบ request ไม่ได้: %w", err)
@@ -277,6 +315,11 @@ func (g *Gemini) generateWith(ctx context.Context, model, systemPrompt, userProm
 			msg = strings.TrimSpace(string(raw))
 		}
 		httpErr := fmt.Errorf("ai: %s ตอบ %d: %s", model, resp.StatusCode, msg)
+		// 400 ตอนที่ส่ง thinkingConfig ไป = โมเดลนี้ไม่รู้จัก field นั้น
+		// (เจอจริงกับ gemini-3.5-flash-lite) ลองใหม่โดยไม่ส่งได้เลย
+		if resp.StatusCode == http.StatusBadRequest && withThinkingConfig {
+			return "", errThinkingConfigRejected
+		}
 		// 404 เจอจริงกับ gemini-2.5-flash ที่มีชื่อในรายการ models แต่เรียกไม่ได้
 		// 5xx เป็นฝั่ง Google เอง — ทั้งสองแบบลองตัวถัดไปมีโอกาสรอด
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode >= 500 {

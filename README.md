@@ -119,6 +119,10 @@ kubectl -n vertex create secret generic gemini-api-key \
 - **ต้องปิด thinking** (`thinkingConfig.thinkingBudget = 0`) — Gemini 3.x เปิดไว้เป็น
   ค่าเริ่มต้นและโทเคนที่ใช้คิดถูกหักจาก `maxOutputTokens` ก้อนเดียวกัน
   ผลคือตอบมา 12 โทเคนแล้วตัดกลางประโยคโดย `finishReason` ไม่ได้บอกว่าโดนตัด
+- **แต่ `gemini-3.5-flash-lite` ตอบ 400 ถ้าส่ง `thinkingConfig` ไปด้วย** ส่วน
+  `3.1-flash-lite` กับ `3.5-flash` รับได้ — code จำเองตอน runtime แล้วลองใหม่
+  โดยไม่ส่ง ไม่ได้เขียนรายชื่อโมเดลไว้ตายตัวเพราะรายการของ Google เปลี่ยนบ่อย
+  (ปลอดภัยเพราะตัวที่ไม่รับคือตัวที่ไม่มี thinking ให้ปิดอยู่แล้ว)
 - **key ส่งทาง header** `x-goog-api-key` ไม่ใช่ query string ที่ไปโผล่ใน access log ของ proxy
 - **cache คิดจากตัวเลข ไม่ใช่เวลา** — ปัดปริมาณน้ำเป็นช่วงละ 10 ml ไม่งั้นกดเพิ่มทีละ
   5 ml จะ generate ใหม่ทุกครั้งจนหมด quota ของ free tier

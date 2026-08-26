@@ -371,3 +371,43 @@ func TestBlockedPromptDoesNotBurnOtherModels(t *testing.T) {
 		t.Fatalf("ยิงไป %d ครั้ง ควรหยุดที่ตัวแรก", calls)
 	}
 }
+
+// regression: gemini-3.5-flash-lite ตอบ 400 ถ้าส่ง thinkingConfig ไปด้วย
+// เดิม 400 ถือเป็น "จบเลย" ทำให้ตัวหลักใช้ไม่ได้และไม่ได้ลองตัวสำรองด้วย
+func TestRetriesWithoutThinkingConfigWhenModelRejectsIt(t *testing.T) {
+	var sawThinking []bool
+	g, _ := fakeGemini(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		has := strings.Contains(string(body), "thinkingConfig")
+		sawThinking = append(sawThinking, has)
+		if has {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":400,"message":"Request contains an invalid argument."}}`))
+			return
+		}
+		okResponse("ok")(w, r)
+	})
+	g.models = []string{"picky"}
+	s := NewService(g, time.Hour)
+
+	ins, err := s.WaterInsight(context.Background(), sampleFacts())
+	if err != nil {
+		t.Fatalf("ควรลองใหม่โดยไม่ส่ง thinkingConfig แต่ได้ error: %v", err)
+	}
+	if ins.Model != "picky" {
+		t.Errorf("model = %q ควรเป็นตัวเดิมที่ลองใหม่สำเร็จ", ins.Model)
+	}
+	if len(sawThinking) != 2 || !sawThinking[0] || sawThinking[1] {
+		t.Fatalf("ลำดับการส่ง thinkingConfig = %v ควรเป็น [true false]", sawThinking)
+	}
+
+	// รอบถัดไปต้องจำได้แล้วว่าโมเดลนี้ไม่รับ ไม่ต้องเสียเที่ยวยิงให้โดน 400 ซ้ำ
+	f := sampleFacts()
+	f.TodayMl += 80
+	if _, err := s.WaterInsight(context.Background(), f); err != nil {
+		t.Fatal(err)
+	}
+	if len(sawThinking) != 3 || sawThinking[2] {
+		t.Errorf("รอบสองส่ง thinkingConfig อีก = %v ควรจำได้แล้ว", sawThinking)
+	}
+}
