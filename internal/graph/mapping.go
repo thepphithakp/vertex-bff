@@ -230,16 +230,30 @@ func hasRole(roles []string, want string) bool {
 // สรุปรายวัน
 // -----------------------------------------------------------------------------
 
-// dayKey ตัดเวลาออกให้เหลือแค่วัน ใช้เป็น key ของ bucket
-func dayKey(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+// dayKey ตัดเวลาออกให้เหลือแค่วัน ใน timezone ที่กำหนด ใช้เป็น key ของ bucket
+//
+// ต้องแปลง location ก่อนเสมอ ห้ามใช้ t.Location() ของแต่ละค่า
+//
+// time.Time ที่เอาไปเป็น key ของ map จะถือว่าเท่ากันก็ต่อเมื่อทั้งเวลาและ
+// location ตรงกัน วันที่ 20 ส.ค. เที่ยงคืน UTC กับวันที่ 20 ส.ค. เที่ยงคืน +07:00
+// เป็นคนละ key แม้จะเป็น "วันเดียวกัน" ในสายตาผู้ใช้
+//
+// log ที่ parse มาจาก JSON เป็น UTC ส่วน from มาพร้อม offset ของเครื่องผู้เรียก
+// ตอนที่เขียนครั้งแรกใช้ t.Location() ทั้งสองฝั่ง ผลคือ key คนละชุดกันสนิท
+// bucket รายวันจึงเป็น 0 ทั้งหมด ทั้งที่ยอดรวมกับค่าเฉลี่ยถูกต้อง
+// (หน้า Analytics ของ iOS ขึ้นตัวเลขถูกแต่กราฟว่างเปล่า — VT-102)
+func dayKey(t time.Time, loc *time.Location) time.Time {
+	t = t.In(loc)
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
 }
 
 // eachDay ไล่ทุกวันตั้งแต่ from ถึง to
 //
+// นับวันตาม timezone ของ from เพราะนั่นคือ "วัน" ในปฏิทินของผู้ใช้ที่ถาม
 // ต้องเติมวันที่ไม่มีข้อมูลเป็น 0 ด้วย ไม่งั้นกราฟจะขาดช่วงและอ่านผิด
 func eachDay(from, to time.Time, fn func(time.Time)) {
-	for d := dayKey(from); !d.After(dayKey(to)); d = d.AddDate(0, 0, 1) {
+	loc := from.Location()
+	for d := dayKey(from, loc); !d.After(dayKey(to, loc)); d = d.AddDate(0, 0, 1) {
 		fn(d)
 	}
 }
@@ -254,6 +268,7 @@ func daysBetween(from, to time.Time) float64 {
 }
 
 func buildLitterSummary(logs []client.LitterLog, from, to time.Time) *model.LitterSummary {
+	loc := from.Location()
 	poop := map[time.Time]int{}
 	pee := map[time.Time]int{}
 	totalPoop, totalPee := 0, 0
@@ -262,7 +277,7 @@ func buildLitterSummary(logs []client.LitterLog, from, to time.Time) *model.Litt
 		if !l.IsActive {
 			continue
 		}
-		k := dayKey(l.Date)
+		k := dayKey(l.Date, loc)
 		switch strings.ToLower(l.Type) {
 		case "poop":
 			poop[k] += l.Amount
@@ -293,13 +308,14 @@ func buildLitterSummary(logs []client.LitterLog, from, to time.Time) *model.Litt
 const waterTargetMlPerKg = 50.0
 
 func buildWaterSummary(logs []client.WaterLog, from, to time.Time, weightKg *float64) *model.WaterSummary {
+	loc := from.Location()
 	ml := map[time.Time]int{}
 	total := 0
 	for _, l := range logs {
 		if !l.IsActive {
 			continue
 		}
-		ml[dayKey(l.Date)] += l.Amount
+		ml[dayKey(l.Date, loc)] += l.Amount
 		total += l.Amount
 	}
 
