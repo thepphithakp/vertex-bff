@@ -17,6 +17,7 @@ import (
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/vertex/bff/internal/config"
 	"github.com/vertex/bff/internal/graph"
 	"github.com/vertex/bff/internal/loader"
+	"github.com/vertex/bff/internal/metrics"
 )
 
 const headerRequestID = "X-Request-Id"
@@ -87,6 +89,9 @@ func main() {
 	app.Get("/livez", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
 	app.Get("/readyz", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
 	app.Get("/health", func(c *fiber.Ctx) error { return c.JSON(fiber.Map{"status": "ok"}) })
+	// ให้ Prometheus มาดึง — เข้าถึงจากนอกคลัสเตอร์ไม่ได้
+	// เพราะ ingress route เฉพาะ /graphql เข้ามา
+	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
 
 	// route เดียวของ service นี้
 	//
@@ -170,6 +175,10 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 				attrs = append(attrs, "rejected", rejected)
 			}
 			slog.Info("graphql_operation", attrs...)
+
+			// บันทึกที่เดียวกับ log เพื่อให้ตัวเลขบนกราฟกับบรรทัดใน Kibana
+			// มาจากจุดเดียวกันเสมอ ไม่ต้องสงสัยว่าทำไมสองที่ไม่ตรงกัน
+			metrics.RecordOperation(name, time.Since(start).Seconds(), cost, len(r.Errors), rejected)
 			return r
 		}
 

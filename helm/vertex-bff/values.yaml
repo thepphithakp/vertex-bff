@@ -109,3 +109,13 @@ tolerations: []
 affinity: {}
 podAnnotations: {}
 env: []
+
+# ให้ Prometheus มาดึง /metrics (VT-109)
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  # ⚠️ ไม่ใส่ label นี้ = ServiceMonitor ถูกสร้างแต่ไม่มีใครมาดึง และไม่มีอะไรฟ้อง
+  #    Prometheus ในคลัสเตอร์นี้เลือกด้วย matchLabels: {release: prometheus-grafana}
+  additionalLabels:
+    release: prometheus-grafana
