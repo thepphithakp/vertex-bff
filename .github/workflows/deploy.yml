@@ -37,11 +37,7 @@ jobs:
           fi
 
       - name: ตรวจว่าไม่มีความลับหลุดเข้า repo
-        run: |
-          if git ls-files | grep -E '\.(pem|key)$|kubeconfig'; then
-            echo "🔴 พบไฟล์ที่ไม่ควรอยู่ใน repo"
-            exit 1
-          fi
+        run: ./scripts/check-secrets.sh
 
   build-and-push:
     needs: test
