@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -112,7 +113,29 @@ func (s *Service) WaterInsight(ctx context.Context, f WaterFacts) (*Insight, err
 	}
 
 	// model ที่ตอบอาจไม่ใช่ตัวแรกในลำดับ ถ้าตัวหลักหมดโควตาไปแล้ว
-	text, model, err := s.gemini.Generate(ctx, systemPrompt, f.userPrompt(angleFor(key)))
+	//
+	// ลองได้สองรอบ เพราะข้อความที่เขียนเพี้ยนไม่ได้แจ้ง error อะไรกลับมา
+	// มันตอบ 200 ตามปกติ การ generate ใหม่มักได้ของที่ใช้ได้ (temperature ไม่ใช่ 0)
+	// ถ้ายังไม่ผ่านอีกก็ยอมไม่มีคำวิเคราะห์ ดีกว่าปล่อยคำเพี้ยนขึ้นหน้าจอ
+	var (
+		text  string
+		model string
+		err   error
+	)
+	for attempt := 1; attempt <= 2; attempt++ {
+		text, model, err = s.gemini.Generate(ctx, systemPrompt, f.userPrompt(angleFor(key)))
+		if err != nil {
+			return nil, err
+		}
+		if vErr := validateInsight(text, f); vErr != nil {
+			err = vErr
+			slog.WarnContext(ctx, "ข้อความจาก LLM ไม่ผ่านการตรวจ",
+				"attempt", attempt, "model", model, "reason", vErr.Error())
+			continue
+		}
+		err = nil
+		break
+	}
 	if err != nil {
 		return nil, err
 	}

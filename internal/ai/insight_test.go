@@ -411,3 +411,80 @@ func TestRetriesWithoutThinkingConfigWhenModelRejectsIt(t *testing.T) {
 		t.Errorf("รอบสองส่ง thinkingConfig อีก = %v ควรจำได้แล้ว", sawThinking)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ด่านตรวจข้อความก่อนถึงผู้ใช้
+// ---------------------------------------------------------------------------
+
+// เจอจริงตอนทดสอบกับ Gemini: ชื่อ "ส้มโอ" ออกมาเป็น "วันนี้ส้ม เพิ่งดื่มน้ำ"
+func TestRejectsTruncatedPetName(t *testing.T) {
+	f := sampleFacts()
+	f.PetName = "ส้มโอ"
+
+	if err := validateInsight("วันนี้ส้ม เพิ่งดื่มน้ำไป 120 ml", f); err == nil {
+		t.Error("ชื่อถูกเขียนขาดแต่ผ่านการตรวจ")
+	}
+	if err := validateInsight("วันนี้ส้มโอดื่มน้ำไป 120 ml", f); err != nil {
+		t.Errorf("ชื่อครบแต่ไม่ผ่าน: %v", err)
+	}
+	// ไม่เอ่ยชื่อเลยไม่ผิดกติกา โมเดลจะเรียก "น้องแมว" ก็ได้
+	if err := validateInsight("วันนี้น้องแมวดื่มน้ำไป 120 ml", f); err != nil {
+		t.Errorf("ไม่เอ่ยชื่อไม่ควรถือว่าผิด: %v", err)
+	}
+}
+
+func TestRejectsEmptyAndOverlongText(t *testing.T) {
+	f := sampleFacts()
+	if err := validateInsight("   ", f); err == nil {
+		t.Error("ข้อความว่างต้องไม่ผ่าน")
+	}
+	if err := validateInsight(strings.Repeat("ก", 700), f); err == nil {
+		t.Error("ข้อความยาวเกินการ์ดต้องไม่ผ่าน")
+	}
+}
+
+// เขียนเพี้ยนรอบแรกต้อง generate ใหม่ให้ ไม่ใช่ปล่อยขึ้นหน้าจอ
+func TestRegeneratesWhenOutputLooksBroken(t *testing.T) {
+	calls := 0
+	g, _ := fakeGemini(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			okResponse("วันนี้ส้ม เพิ่งดื่มน้ำไปนิดเดียว")(w, r)
+			return
+		}
+		okResponse("วันนี้ส้มโอดื่มน้ำไปน้อยกว่าเป้าหมาย")(w, r)
+	})
+	s := NewService(g, time.Hour)
+
+	f := sampleFacts()
+	f.PetName = "ส้มโอ"
+	ins, err := s.WaterInsight(context.Background(), f)
+	if err != nil {
+		t.Fatalf("ควรลองใหม่แล้วผ่าน แต่ได้ error: %v", err)
+	}
+	if !strings.Contains(ins.Text, "ส้มโอ") {
+		t.Errorf("ได้ข้อความรอบแรกที่เพี้ยนมา: %q", ins.Text)
+	}
+	if calls != 2 {
+		t.Errorf("ยิงไป %d ครั้ง ควรเป็น 2 (เพี้ยนหนึ่ง ผ่านหนึ่ง)", calls)
+	}
+}
+
+// เพี้ยนทั้งสองรอบต้องยอมไม่มีคำวิเคราะห์ ให้ client ใช้ข้อความสำรอง
+func TestGivesUpAfterTwoBadOutputs(t *testing.T) {
+	calls := 0
+	g, _ := fakeGemini(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		okResponse("วันนี้ส้ม เพิ่งดื่มน้ำ")(w, r)
+	})
+	s := NewService(g, time.Hour)
+
+	f := sampleFacts()
+	f.PetName = "ส้มโอ"
+	if _, err := s.WaterInsight(context.Background(), f); err == nil {
+		t.Fatal("ควรได้ error ไม่ใช่ปล่อยข้อความเพี้ยนออกไป")
+	}
+	if calls != 2 {
+		t.Errorf("ยิงไป %d ครั้ง ควรหยุดที่ 2", calls)
+	}
+}
