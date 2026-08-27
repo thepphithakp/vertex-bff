@@ -69,11 +69,37 @@ func (s *Service) Enabled() bool { return s != nil && s.gemini.Enabled() }
 const systemPrompt = `คุณเป็นผู้ช่วยของแอปดูแลสัตว์เลี้ยง เขียนสรุปสั้นๆ ให้เจ้าของอ่านเข้าใจทันที
 
 กติกาที่ห้ามละเมิด
-- ตอบเป็นภาษาไทย ความยาว 2-3 ประโยค ไม่ต้องมีหัวข้อ ไม่ต้องใช้ bullet
+- ตอบเป็นภาษาไทย ยาว 1-3 ประโยค ไม่ต้องมีหัวข้อ ไม่ต้องใช้ bullet
 - ห้ามวินิจฉัยโรคและห้ามสั่งยา บอกได้แค่ว่าอาการแบบไหนควรพาไปหาสัตวแพทย์
 - อ้างอิงเฉพาะตัวเลขที่ได้รับ ห้ามแต่งตัวเลขหรือข้อมูลที่ไม่ได้ให้มา
 - ถ้าข้อมูลไม่พอให้บอกตรงๆ ว่ายังสรุปไม่ได้ ห้ามเดา
-- น้ำเสียงเป็นกันเอง ไม่ตื่นตระหนก และห้ามขึ้นต้นด้วยคำทักทาย`
+- น้ำเสียงเป็นกันเอง ไม่ตื่นตระหนก และห้ามขึ้นต้นด้วยคำทักทาย
+
+เรื่องสำนวน — เจ้าของเปิดอ่านทุกวัน ข้อความที่ขึ้นต้นเหมือนเดิมทุกครั้งจะถูกมองข้าม
+- **ห้ามไล่ทวนตัวเลขทุกตัวที่ได้รับ** หยิบมาเฉพาะตัวที่ทำให้เข้าใจสถานการณ์
+- เปลี่ยนรูปประโยคเปิดทุกครั้ง อย่าเริ่มด้วยโครงเดิมซ้ำๆ
+- ไม่ต้องปิดท้ายด้วยคำเตือนเรื่องสัตวแพทย์ทุกครั้ง ใส่เมื่อตัวเลขบอกว่าควรใส่จริงๆ`
+
+// angles ทำให้ข้อความไม่ซ้ำรูปเดิมทุกวัน
+//
+// เลือกจากลายนิ้วมือของตัวเลข ไม่ได้สุ่ม — ข้อมูลชุดเดิมจึงได้มุมเดิมเสมอ
+// ซึ่งจำเป็นเพราะ cache เก็บผลลัพธ์ไว้ ถ้าสุ่มจะได้คนละข้อความทุกครั้งที่
+// cache หมดอายุทั้งที่ข้อมูลไม่ได้เปลี่ยน แล้วเจ้าของจะสับสนว่าเกิดอะไรขึ้น
+var angles = []string{
+	"คราวนี้เน้นว่าควรทำอะไรต่อในวันนี้",
+	"คราวนี้เน้นแนวโน้มของทั้งสัปดาห์ว่าดีขึ้นหรือแย่ลง",
+	"คราวนี้เน้นเทียบกับเป้าหมายของวันนี้เป็นหลัก",
+	"คราวนี้เน้นข้อสังเกตที่เจ้าของน่าจะมองข้าม",
+	"คราวนี้เน้นให้กำลังใจถ้าทำได้ดี หรือเตือนอย่างอ่อนโยนถ้ายังห่างเป้า",
+}
+
+func angleFor(fingerprint string) string {
+	if fingerprint == "" {
+		return angles[0]
+	}
+	// ใช้ไบต์แรกของ fingerprint พอ ไม่ต้องกระจายให้สวยงามมาก
+	return angles[int(fingerprint[0])%len(angles)]
+}
 
 func (s *Service) WaterInsight(ctx context.Context, f WaterFacts) (*Insight, error) {
 	if !s.Enabled() {
@@ -86,7 +112,7 @@ func (s *Service) WaterInsight(ctx context.Context, f WaterFacts) (*Insight, err
 	}
 
 	// model ที่ตอบอาจไม่ใช่ตัวแรกในลำดับ ถ้าตัวหลักหมดโควตาไปแล้ว
-	text, model, err := s.gemini.Generate(ctx, systemPrompt, f.userPrompt())
+	text, model, err := s.gemini.Generate(ctx, systemPrompt, f.userPrompt(angleFor(key)))
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +176,7 @@ func (f WaterFacts) fingerprint() string {
 	return hex.EncodeToString(sum[:16])
 }
 
-func (f WaterFacts) userPrompt() string {
+func (f WaterFacts) userPrompt(angle string) string {
 	var b strings.Builder
 	b.WriteString("ข้อมูลการกินน้ำของสัตว์เลี้ยง\n")
 	fmt.Fprintf(&b, "- ชื่อ: %s\n", f.PetName)
@@ -175,6 +201,9 @@ func (f WaterFacts) userPrompt() string {
 	if f.TargetMl != nil {
 		fmt.Fprintf(&b, "- ในช่วงนั้นมี %d วันที่ได้น้ำต่ำกว่าเป้าหมาย\n", f.DaysBelowTarget)
 	}
-	b.WriteString("\nสรุปให้เจ้าของฟังว่าตอนนี้เป็นยังไงและควรทำอะไรต่อ")
+	b.WriteString("\nสรุปให้เจ้าของฟังว่าตอนนี้เป็นยังไง")
+	if angle != "" {
+		b.WriteString(" — " + angle)
+	}
 	return b.String()
 }

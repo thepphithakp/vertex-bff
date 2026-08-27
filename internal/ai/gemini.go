@@ -253,9 +253,13 @@ func (g *Gemini) cooldownOf(model string) time.Duration {
 
 func (g *Gemini) generateWith(ctx context.Context, model, systemPrompt, userPrompt string, withThinkingConfig bool) (string, error) {
 	cfg := generationConfig{
-		// ต่ำแต่ไม่ศูนย์ — อยากให้สำนวนเปลี่ยนบ้างในแต่ละวัน
-		// แต่ไม่อยากให้ตัวเลขหรือคำแนะนำแกว่ง
-		Temperature: 0.4,
+		// สูงพอให้สำนวนไม่ซ้ำเดิมทุกวัน — ตัวเลขไม่แกว่งตามอยู่แล้ว
+		// เพราะ prompt สั่งห้ามแต่งตัวเลขและส่งค่าจริงไปให้ครบ
+		//
+		// ที่ 0.4 ข้อความออกมาเป็นแม่แบบเดียวกันเกือบทุกครั้ง
+		// ที่ 0.9 เริ่มมีคำแปลกๆ หลุดมา (เจอ "นะเออ" ตอนทดสอบ)
+		// ตัวที่ทำให้ไม่ซ้ำจริงๆ คือ angle ใน insight.go ไม่ใช่ค่านี้
+		Temperature: 0.8,
 		// การ์ดบนมือถือกว้างไม่กี่บรรทัด ยาวกว่านี้ก็อ่านไม่จบ
 		// ตั้งเผื่อไว้เพราะภาษาไทยกินโทเคนต่อตัวอักษรมากกว่าอังกฤษ
 		MaxOutputTokens: 1024,
