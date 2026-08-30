@@ -1,0 +1,47 @@
+{{- if .Values.httpRoute.enabled }}
+{{- /*
+HTTPRoute — เส้นทางจากภายนอกเข้า vertex-bff (แทน Ingress)
+
+Gateway API แบ่งความเป็นเจ้าของไว้ชัด: Gateway เป็นของผู้ดูแลคลัสเตอร์
+(อยู่ที่ vertex-backend/infra/gateway/) ส่วน route เป็นของเจ้าของ service
+จึงควรอยู่ใน chart นี้
+
+⚠️ ก่อนเปิด httpRoute.enabled ต้องทำสองอย่างตามลำดับ
+   1. apply infra/gateway/05-rbac-httproute.yaml — vertex-sa ยังไม่มีสิทธิ์
+      สร้าง httproutes (Role เดิมให้แค่ networking.k8s.io/ingresses)
+      ถ้าข้ามขั้นนี้ helm upgrade ใน GitHub Actions จะล้มด้วย forbidden
+   2. ลบ infra/gateway/06-httproute-bff.yaml ออกจากคลัสเตอร์ก่อน
+      ไม่งั้นจะมีสอง object ชี้ path เดียวกัน ซึ่ง spec ตัดสินให้ตัวที่ถูกสร้าง
+      ก่อนชนะ — ไม่พังแต่เดาไม่ออกว่าใครทำงานอยู่
+*/}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "vertex-bff.fullname" . }}
+  labels:
+    {{- include "vertex-bff.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.httpRoute.parentRef.name }}
+      {{- with .Values.httpRoute.parentRef.namespace }}
+      namespace: {{ . }}
+      {{- end }}
+      {{- with .Values.httpRoute.parentRef.sectionName }}
+      sectionName: {{ . }}
+      {{- end }}
+  {{- if not .Values.httpRoute.hostnames }}
+  {{- fail "ต้องส่ง httpRoute.hostnames ตอน deploy — ค่าจริงไม่เก็บใน repo ที่เป็น public" }}
+  {{- end }}
+  hostnames:
+    {{- toYaml .Values.httpRoute.hostnames | nindent 4 }}
+  rules:
+    - matches:
+        {{- range .Values.httpRoute.paths }}
+        - path:
+            type: {{ .type }}
+            value: {{ .value }}
+        {{- end }}
+      backendRefs:
+        - name: {{ include "vertex-bff.fullname" $ }}
+          port: {{ $.Values.service.port }}
+{{- end }}
