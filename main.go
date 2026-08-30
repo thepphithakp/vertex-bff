@@ -31,6 +31,27 @@ import (
 
 const headerRequestID = "X-Request-Id"
 
+// bodyLimit จำกัดขนาด request
+//
+// GraphQL ที่นี่ไม่รับ binary เลย — schema.graphql เขียนกำกับไว้ว่าห้ามใส่รูป
+// เป็น base64 รูปเดินทางผ่าน REST (/pets/{id}/avatar) ที่มี ETag cache แทน
+// body ที่ใหญ่สุดจริงๆ คือ logLitterBatch ที่รับ array ของ log ซึ่งยังเล็กมาก
+//
+// ⚠️ ไม่ตั้งค่านี้ = ไม่มีเพดานที่ใช้ได้จริง
+//
+// gqlgen อ่าน body ทั้งก้อนเข้าหน่วยความจำก่อน แล้ว withRequestContext
+// (ซึ่งเป็นที่ที่ JWT ถูกอ่าน) ทำงานทีหลัง — คนที่ไม่มี token จึงยิงให้ pod
+// กิน memory ได้ ส่วน Cloudflare free ปล่อย body ได้ถึง 100MB ต่อ request
+// ขณะที่ pod นี้มี limits.memory เพียง 256Mi
+//
+// ก่อนหน้านี้รอดมาได้เพราะ ingress-nginx ตั้ง proxy-body-size: 1m ไว้ ซึ่ง
+// เป็นค่า default ของ nginx ที่ติดมาเฉยๆ ไม่ได้ตั้งใจกัน — พอย้ายไป Envoy
+// Gateway (VT-127) ที่ไม่จำกัด body size โดย default เกราะนั้นจะหายไป
+//
+// ค่านี้เท่ากับที่ nginx บังคับอยู่แล้ว การใส่จึงไม่เปลี่ยนพฤติกรรมวันนี้
+// fasthttp ปฏิเสธด้วย 413 ตั้งแต่ชั้น server ไม่ต้องอ่าน body เข้ามาเลย
+const bodyLimit = 1 << 20 // 1MB
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
@@ -67,21 +88,7 @@ func main() {
 
 	srv := newGraphQLServer(resolver, cfg)
 
-	app := fiber.New(fiber.Config{
-		AppName:      "Vertex BFF",
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		ErrorHandler: func(c *fiber.Ctx, err error) error {
-			code := fiber.StatusInternalServerError
-			if fe, ok := err.(*fiber.Error); ok {
-				code = fe.Code
-			}
-			return c.Status(code).JSON(fiber.Map{
-				"error":     err.Error(),
-				"requestId": c.Locals("requestID"),
-			})
-		},
-	})
+	app := newFiberApp()
 
 	app.Use(requestIDMiddleware)
 	app.Use(accessLogMiddleware)
@@ -110,6 +117,29 @@ func main() {
 		slog.Error("server หยุดทำงาน", "err", err)
 		os.Exit(1)
 	}
+}
+
+// newFiberApp ตั้งค่า HTTP layer ทั้งหมดที่ไม่ขึ้นกับ dependency ภายนอก
+//
+// แยกออกมาจาก main เพื่อให้ test ยิงของจริงได้ — ถ้า config อยู่ใน main
+// test จะพิสูจน์ได้แค่ว่า fiber ทำงานถูก ไม่ได้พิสูจน์ว่าแอปเราตั้งค่าไว้จริง
+func newFiberApp() *fiber.App {
+	return fiber.New(fiber.Config{
+		AppName:      "Vertex BFF",
+		BodyLimit:    bodyLimit,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if fe, ok := err.(*fiber.Error); ok {
+				code = fe.Code
+			}
+			return c.Status(code).JSON(fiber.Map{
+				"error":     err.Error(),
+				"requestId": c.Locals("requestID"),
+			})
+		},
+	})
 }
 
 func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Server {
