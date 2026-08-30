@@ -80,6 +80,41 @@ ingress:
   pathType: Prefix
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+# --- Gateway API ----------------------------------------------------------
+# ingress: ข้างบนยังเปิดอยู่และเป็นตัวที่รับ traffic จริง
+# อันนี้คือทางเลือกใหม่ที่จะมาแทนเมื่อย้าย Gateway API เสร็จ
+#
+# ⚠️ ยังปิดอยู่โดยตั้งใจ — ตอนนี้ infra/gateway/06-httproute-bff.yaml เป็นเจ้าของ route
+#    ของ vertex-bff อยู่ เปิดตรงนี้พร้อมกันจะได้ HTTPRoute สองตัวชี้ path เดียวกัน
+#
+# ลำดับที่ถูกต้องตอนย้ายมาให้ chart เป็นเจ้าของ:
+#   1. kubectl apply -f infra/gateway/05-rbac-httproute.yaml   (สิทธิ์ของ CD)
+#   2. kubectl delete -f infra/gateway/06-httproute-bff.yaml
+#   3. เปลี่ยน enabled เป็น true แล้ว deploy
+httpRoute:
+  enabled: false
+  # Gateway ที่ infra/gateway/01-gateway.yaml สร้างไว้
+  parentRef:
+    name: vertex-gateway
+    # เว้นว่าง = namespace เดียวกับ release
+    namespace: ""
+    # ชื่อ listener ใน Gateway — ผูกกับ listener ตัวใดตัวหนึ่งไม่ใช่ทั้ง Gateway
+    sectionName: http
+  # ⚠️ ห้ามใส่ค่าจริงลงไฟล์นี้ — repo เป็น public
+  #    ส่งตอน deploy เหมือน ingress.host เดิม:
+  #      --set httpRoute.hostnames[0]="${{ secrets.INGRESS_HOST }}"
+  #
+  #    ระหว่างช่วงย้ายต้องส่ง "สองชื่อ" — ชื่อที่ cloudflared เขียน Host ทับให้
+  #    กับชื่อที่เบราว์เซอร์เห็นจริง ใส่ทั้งคู่ทำให้ถอด originRequest.httpHostHeader
+  #    ออกจาก cloudflared ได้ในภายหลังโดยไม่ต้องแตะ route
+  #      --set httpRoute.hostnames[1]="${{ secrets.PUBLIC_HOST }}"
+  #
+  #    ว่างไว้แล้วเปิด enabled = helm จะ fail ทันทีพร้อมข้อความบอกเหตุ
+  hostnames: []
+  paths:
+    - type: PathPrefix
+      value: /graphql
+
 
 # GraphQL ใช้ CPU น้อยแต่รอ I/O เยอะ ตั้ง limit ให้พอสำหรับ burst
 # ตอน resolve หลาย field พร้อมกัน
