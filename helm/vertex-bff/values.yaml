@@ -104,10 +104,8 @@ httpRoute:
   #    ส่งตอน deploy เหมือน ingress.host เดิม:
   #      --set httpRoute.hostnames[0]="${{ secrets.INGRESS_HOST }}"
   #
-  #    ระหว่างช่วงย้ายต้องส่ง "สองชื่อ" — ชื่อที่ cloudflared เขียน Host ทับให้
-  #    กับชื่อที่เบราว์เซอร์เห็นจริง ใส่ทั้งคู่ทำให้ถอด originRequest.httpHostHeader
-  #    ออกจาก cloudflared ได้ในภายหลังโดยไม่ต้องแตะ route
-  #      --set httpRoute.hostnames[1]="${{ secrets.PUBLIC_HOST }}"
+  #    ส่งชื่อเดียวพอ — DNS ไปที่ *.pluem.me อย่างเดียวแล้ว และ cloudflared
+  #    ตั้ง httpHostHeader ให้ตรงกับชื่อนั้น (ดู infra/gateway/README.md ขั้นที่ 4)
   #
   #    ว่างไว้แล้วเปิด enabled = helm จะ fail ทันทีพร้อมข้อความบอกเหตุ
   hostnames: []
