@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/vertex/bff/internal/metrics"
 )
 
 const defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta"
@@ -141,6 +143,9 @@ type generateResponse struct {
 // เวลาสำนวนเปลี่ยนไปจะได้ตอบได้ว่ามาจากไหน
 func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) (string, string, error) {
 	if !g.Enabled() {
+		// นับแยกจาก error เพราะเป็นสภาพที่ตั้งใจ ไม่ใช่ความผิดพลาด
+		// ถ้ายุบรวมกัน alert จะเด้งตลอดบน environment ที่ไม่ได้ตั้ง key
+		metrics.RecordGeminiRequest(metrics.GeminiDisabled)
 		return "", "", ErrDisabled
 	}
 
@@ -153,6 +158,7 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 	for _, m := range g.models {
 		// ตัวที่เพิ่งโดนเพดานไปข้ามไปเลย ไม่ต้องเสียเวลายิงให้โดน 429 ซ้ำ
 		if g.cooling(m) {
+			metrics.RecordGeminiAttempt(m, metrics.GeminiAttemptCooling)
 			continue
 		}
 		attempted++
@@ -161,11 +167,14 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 		if errors.Is(err, errThinkingConfigRejected) {
 			// โมเดลนี้ไม่รับ thinkingConfig — จำไว้แล้วลองใหม่ทันทีโดยไม่ส่ง
 			// ไม่นับเป็นความล้มเหลวของโมเดล เพราะเป็นเรื่องของ request ที่เราส่ง
+			// จึงไม่บันทึก attempt ของรอบแรก มิฉะนั้นตัวเลขจะดูเหมือนโมเดลพัง
 			g.markNoThinkingConfig(m)
 			slog.InfoContext(ctx, "โมเดลไม่รับ thinkingConfig ลองใหม่โดยไม่ส่ง", "model", m)
 			text, err = g.generateWith(ctx, m, systemPrompt, userPrompt, false)
 		}
 		if err == nil {
+			metrics.RecordGeminiAttempt(m, metrics.GeminiAttemptOK)
+			metrics.RecordGeminiRequest(metrics.GeminiOK)
 			return text, m, nil
 		}
 		lastErr = err
@@ -174,6 +183,7 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 		if errors.As(err, &qe) {
 			quotaHit = true
 			g.markCooling(m, qe.retryAfter)
+			metrics.RecordGeminiAttempt(m, metrics.GeminiAttemptQuota)
 			slog.WarnContext(ctx, "โมเดลหมดโควตา สลับไปตัวถัดไป",
 				"model", m, "cooldown", g.cooldownOf(m).String())
 			continue
@@ -182,15 +192,20 @@ func (g *Gemini) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 		// 404 (โมเดลนี้ใช้กับ key นี้ไม่ได้) และ 5xx ลองตัวถัดไปมีโอกาสรอด
 		// ส่วน prompt ที่ถูกบล็อกจะโดนเหมือนกันทุกตัว ไม่ต้องลองต่อ
 		if !worthRetryingOnNextModel(err) {
+			metrics.RecordGeminiAttempt(m, metrics.GeminiAttemptFatal)
+			metrics.RecordGeminiRequest(metrics.GeminiError)
 			return "", "", err
 		}
+		metrics.RecordGeminiAttempt(m, metrics.GeminiAttemptUnavailable)
 		slog.WarnContext(ctx, "โมเดลใช้ไม่ได้ สลับไปตัวถัดไป", "model", m, "error", err.Error())
 	}
 
 	// ไม่ได้ยิงเลยเพราะทุกตัวยัง cooldown อยู่ ก็นับเป็นหมดโควตาเหมือนกัน
 	if attempted == 0 || quotaHit {
+		metrics.RecordGeminiRequest(metrics.GeminiQuota)
 		return "", "", ErrQuota
 	}
+	metrics.RecordGeminiRequest(metrics.GeminiError)
 	return "", "", lastErr
 }
 
