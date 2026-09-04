@@ -126,3 +126,70 @@ jobs:
           # ที่ rollout ขึ้นเขียวทั้งที่ CrashLoop อยู่ จึงต้องถาม readiness อีกที
           kubectl -n vertex wait --for=condition=ready pod \
             -l app.kubernetes.io/name=vertex-bff --timeout=120s
+
+  # ---------------------------------------------------------------------------
+  # แจ้งผล deploy เข้า Discord
+  # ---------------------------------------------------------------------------
+  # if: always() จำเป็น — ไม่งั้น job นี้จะรันเฉพาะตอน deploy สำเร็จ
+  # ซึ่งกลับหัวกลับหางกับสิ่งที่อยากได้ เพราะกรณีที่ต้องรีบรู้คือตอนมันล้ม
+  #
+  # needs.deploy.result เป็น skipped ได้ด้วย แปลว่า job ก่อนหน้าล้มจน deploy
+  # ไม่ได้รันเลย ต้องนับเป็นความล้มเหลว ไม่ใช่ปล่อยผ่านเงียบๆ
+  #
+  # ⚠️ webhook URL อยู่ใน secret DISCORD_DEPLOY_WEBHOOK เท่านั้น
+  #    repo นี้เป็น public ห้ามใส่ลงไฟล์เด็ดขาด
+  notify:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: always()
+    steps:
+      - name: แจ้งผล deploy เข้า Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+          RESULT: ${{ needs.deploy.result }}
+          SERVICE: vertex-bff
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+
+          # ไม่ตั้ง secret ก็ไม่ควรทำให้ workflow แดง — แค่เตือนแล้วผ่านไป
+          # จะได้ fork หรือ repo ที่ยังไม่ได้ตั้งค่ายัง deploy ได้ตามปกติ
+          if [ -z "${WEBHOOK:-}" ]; then
+            echo "::warning::ยังไม่ได้ตั้ง secret DISCORD_DEPLOY_WEBHOOK — ข้ามการแจ้งเตือน"
+            exit 0
+          fi
+
+          case "$RESULT" in
+            success)   color=3066993;  icon="✅"; text="deploy สำเร็จ" ;;
+            failure)   color=15158332; icon="❌"; text="deploy ล้มเหลว" ;;
+            cancelled) color=9807270;  icon="⚪"; text="deploy ถูกยกเลิก" ;;
+            skipped)   color=15158332; icon="❌"; text="deploy ไม่ได้รัน — ขั้นก่อนหน้าล้ม" ;;
+            *)         color=9807270;  icon="❔"; text="deploy จบด้วยสถานะ $RESULT" ;;
+          esac
+
+          # สร้าง JSON ด้วย jq ไม่ใช่ต่อ string เอง
+          # commit message มี " หรือ newline ได้ ซึ่งจะทำ payload พังเงียบๆ
+          jq -n \
+            --arg title "$icon $SERVICE — $text" \
+            --arg sha "${GITHUB_SHA:0:7}" \
+            --arg msg "$(printf '%s' "$COMMIT_MSG" | head -1 | cut -c1-120)" \
+            --arg who "${GITHUB_ACTOR}" \
+            --arg url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --argjson color "$color" \
+            '{embeds:[{
+               title: $title,
+               url: $url,
+               color: $color,
+               fields: [
+                 {name:"commit", value:("`"+$sha+"` "+$msg), inline:false},
+                 {name:"โดย",    value:$who,  inline:true},
+                 {name:"image",  value:("sha-"+$sha), inline:true}
+               ],
+               footer:{text:"namespace vertex"}
+             }]}' > payload.json
+
+          # --fail-with-body ทำให้ job นี้แดงถ้า Discord ปฏิเสธ
+          # deploy ที่สำเร็จไปแล้วไม่ถูกย้อน แต่จะไม่เงียบว่าแจ้งเตือนไม่ออก
+          curl --fail-with-body -sS -X POST \
+            -H 'Content-Type: application/json' \
+            -d @payload.json "$WEBHOOK"
