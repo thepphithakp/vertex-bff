@@ -60,10 +60,74 @@ var (
 		},
 		[]string{"operation"},
 	)
+
+	// geminiRequests นับผลรวมของการขอคำวิเคราะห์หนึ่งครั้ง — ตัวที่ใช้ตั้ง alert
+	//
+	// สนใจแค่ว่า "ผู้ใช้ได้คำวิเคราะห์จริงไหม" ไม่สนว่าเบื้องหลังต้องไล่กี่โมเดล
+	// result != "ok" แปลว่าผู้ใช้เห็นข้อความสำรอง rule-based แทนของจริง
+	//
+	// ก่อนมี metric นี้ อาการนั้นเห็นได้จาก log อย่างเดียว แปลว่าถ้า Gemini
+	// ล่มยาวก็ไม่มีใครรู้จนกว่าจะมีคนสังเกตว่าคำวิเคราะห์หน้าตาเหมือนเดิมทุกวัน
+	geminiRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gemini_requests_total",
+			Help: "จำนวนครั้งที่ขอคำวิเคราะห์จาก Gemini แยกตามผลลัพธ์รวม",
+		},
+		[]string{"result"},
+	)
+
+	// geminiModelAttempts นับรายโมเดล ใช้ตอบว่า "ตัวไหนพัง" ไม่ใช่ "พังไหม"
+	//
+	// ต่างจาก geminiRequests ตรงที่หนึ่ง request อาจนับหลายครั้งที่นี่
+	// เพราะไล่ fallback ทีละตัว — ถ้าตัวแรกหมดโควตาแล้วตัวที่สองสำเร็จ
+	// จะได้ quota 1 ครั้งและ ok 1 ครั้ง ส่วน geminiRequests ได้ ok ครั้งเดียว
+	//
+	// ค่านี้ทำให้เห็นว่า fallback กำลังทำงานหนักอยู่ทั้งที่ผู้ใช้ยังไม่เดือดร้อน
+	// ซึ่งเป็นจังหวะที่ควรรู้ก่อนที่โมเดลตัวสุดท้ายจะพังตาม
+	//
+	// label model ปลอดภัยเรื่อง cardinality เพราะมาจาก GEMINI_MODELS ใน config
+	// ไม่ได้มาจาก client
+	geminiModelAttempts = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gemini_model_attempts_total",
+			Help: "จำนวนครั้งที่ยิงไปยังโมเดลแต่ละตัว แยกตามผลลัพธ์",
+		},
+		[]string{"model", "result"},
+	)
 )
 
 func init() {
-	prometheus.MustRegister(graphqlOperations, graphqlDuration, graphqlRejected, graphqlComplexity)
+	prometheus.MustRegister(
+		graphqlOperations, graphqlDuration, graphqlRejected, graphqlComplexity,
+		geminiRequests, geminiModelAttempts,
+	)
+}
+
+// ผลลัพธ์ที่เป็นไปได้ของการขอคำวิเคราะห์หนึ่งครั้ง
+const (
+	GeminiOK       = "ok"       // ได้คำวิเคราะห์จริง
+	GeminiQuota    = "quota"    // โดนเพดานครบทุกโมเดล หรือทุกตัวยัง cooldown
+	GeminiError    = "error"    // พังด้วยเหตุอื่น เช่น prompt ถูกบล็อก
+	GeminiDisabled = "disabled" // ยังไม่ได้ตั้ง API key — ตั้งใจ ไม่ใช่ความผิดพลาด
+)
+
+// ผลลัพธ์ของการยิงไปยังโมเดลตัวหนึ่ง
+const (
+	GeminiAttemptOK          = "ok"
+	GeminiAttemptQuota       = "quota"       // 429
+	GeminiAttemptUnavailable = "unavailable" // 404 หรือ 5xx — ลองตัวถัดไปมีโอกาสรอด
+	GeminiAttemptFatal       = "fatal"       // ลองตัวถัดไปก็โดนเหมือนกัน เช่น prompt ถูกบล็อก
+	GeminiAttemptCooling     = "cooling"     // ข้ามไปเพราะเพิ่งโดนเพดาน ยังไม่พ้น cooldown
+)
+
+// RecordGeminiRequest บันทึกผลรวมของการขอคำวิเคราะห์หนึ่งครั้ง
+func RecordGeminiRequest(result string) {
+	geminiRequests.WithLabelValues(result).Inc()
+}
+
+// RecordGeminiAttempt บันทึกผลของการยิงไปยังโมเดลตัวหนึ่ง
+func RecordGeminiAttempt(model, result string) {
+	geminiModelAttempts.WithLabelValues(model, result).Inc()
 }
 
 var (
