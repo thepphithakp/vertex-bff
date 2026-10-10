@@ -12427,10 +12427,6 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 
 // region    ***************************** type.gotpl *****************************
 
-func (ec *executionContext) marshalNAdminMutation2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐAdminMutation(ctx context.Context, sel ast.SelectionSet, v model.AdminMutation) graphql.Marshaler {
-	return ec._AdminMutation(ctx, sel, &v)
-}
-
 func (ec *executionContext) marshalNAdminMutation2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐAdminMutation(ctx context.Context, sel ast.SelectionSet, v *model.AdminMutation) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -12567,10 +12563,6 @@ func (ec *executionContext) marshalNLitterDailyBucket2ᚖgithubᚗcomᚋvertex�
 	return ec._LitterDailyBucket(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNLitterLog2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐLitterLog(ctx context.Context, sel ast.SelectionSet, v model.LitterLog) graphql.Marshaler {
-	return ec._LitterLog(ctx, sel, &v)
-}
-
 func (ec *executionContext) marshalNLitterLog2ᚕᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐLitterLogᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.LitterLog) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -12595,10 +12587,6 @@ func (ec *executionContext) marshalNLitterLog2ᚖgithubᚗcomᚋvertexᚋbffᚋi
 		return graphql.Null
 	}
 	return ec._LitterLog(ctx, sel, v)
-}
-
-func (ec *executionContext) marshalNLitterLogConnection2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐLitterLogConnection(ctx context.Context, sel ast.SelectionSet, v model.LitterLogConnection) graphql.Marshaler {
-	return ec._LitterLogConnection(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalNLitterLogConnection2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐLitterLogConnection(ctx context.Context, sel ast.SelectionSet, v *model.LitterLogConnection) graphql.Marshaler {
@@ -12661,10 +12649,6 @@ func (ec *executionContext) unmarshalNLitterLogInput2ᚖgithubᚗcomᚋvertexᚋ
 	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
-func (ec *executionContext) marshalNLitterSummary2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐLitterSummary(ctx context.Context, sel ast.SelectionSet, v model.LitterSummary) graphql.Marshaler {
-	return ec._LitterSummary(ctx, sel, &v)
-}
-
 func (ec *executionContext) marshalNLitterSummary2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐLitterSummary(ctx context.Context, sel ast.SelectionSet, v *model.LitterSummary) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -12678,10 +12662,6 @@ func (ec *executionContext) marshalNLitterSummary2ᚖgithubᚗcomᚋvertexᚋbff
 func (ec *executionContext) unmarshalNMasterDataInput2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐMasterDataInput(ctx context.Context, v any) (model.MasterDataInput, error) {
 	res, err := ec.unmarshalInputMasterDataInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
-}
-
-func (ec *executionContext) marshalNMasterDataItem2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐMasterDataItem(ctx context.Context, sel ast.SelectionSet, v model.MasterDataItem) graphql.Marshaler {
-	return ec._MasterDataItem(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalNMasterDataItem2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐMasterDataItem(ctx context.Context, sel ast.SelectionSet, v *model.MasterDataItem) graphql.Marshaler {
@@ -12719,10 +12699,6 @@ func (ec *executionContext) marshalNPageInfo2ᚖgithubᚗcomᚋvertexᚋbffᚋin
 	return ec._PageInfo(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNPet2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐPet(ctx context.Context, sel ast.SelectionSet, v model.Pet) graphql.Marshaler {
-	return ec._Pet(ctx, sel, &v)
-}
-
 func (ec *executionContext) marshalNPet2ᚕᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐPetᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.Pet) graphql.Marshaler {
 	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
 		fc := graphql.GetFieldContext(ctx)
@@ -12747,10 +12723,6 @@ func (ec *executionContext) marshalNPet2ᚖgithubᚗcomᚋvertexᚋbffᚋinterna
 		return graphql.Null
 	}
 	return ec._Pet(ctx, sel, v)
-}
-
-func (ec *executionContext) marshalNPetCaregiver2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐPetCaregiver(ctx context.Context, sel ast.SelectionSet, v model.PetCaregiver) graphql.Marshaler {
-	return ec._PetCaregiver(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalNPetCaregiver2ᚕᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐPetCaregiverᚄ(ctx context.Context, sel ast.SelectionSet, v []*model.PetCaregiver) graphql.Marshaler {
@@ -12834,10 +12806,6 @@ func (ec *executionContext) marshalNPetPermission2ᚖgithubᚗcomᚋvertexᚋbff
 		return graphql.Null
 	}
 	return ec._PetPermission(ctx, sel, v)
-}
-
-func (ec *executionContext) marshalNPetViewerPermissions2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐPetViewerPermissions(ctx context.Context, sel ast.SelectionSet, v model.PetViewerPermissions) graphql.Marshaler {
-	return ec._PetViewerPermissions(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalNPetViewerPermissions2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐPetViewerPermissions(ctx context.Context, sel ast.SelectionSet, v *model.PetViewerPermissions) graphql.Marshaler {
@@ -12961,10 +12929,6 @@ func (ec *executionContext) marshalNUUID2string(ctx context.Context, sel ast.Sel
 	return res
 }
 
-func (ec *executionContext) marshalNUser2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v model.User) graphql.Marshaler {
-	return ec._User(ctx, sel, &v)
-}
-
 func (ec *executionContext) marshalNUser2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐUser(ctx context.Context, sel ast.SelectionSet, v *model.User) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -12999,10 +12963,6 @@ func (ec *executionContext) marshalNUserEdge2ᚖgithubᚗcomᚋvertexᚋbffᚋin
 		return graphql.Null
 	}
 	return ec._UserEdge(ctx, sel, v)
-}
-
-func (ec *executionContext) marshalNViewer2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐViewer(ctx context.Context, sel ast.SelectionSet, v model.Viewer) graphql.Marshaler {
-	return ec._Viewer(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalNViewer2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐViewer(ctx context.Context, sel ast.SelectionSet, v *model.Viewer) graphql.Marshaler {
@@ -13041,10 +13001,6 @@ func (ec *executionContext) marshalNWaterDailyBucket2ᚖgithubᚗcomᚋvertexᚋ
 	return ec._WaterDailyBucket(ctx, sel, v)
 }
 
-func (ec *executionContext) marshalNWaterLog2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterLog(ctx context.Context, sel ast.SelectionSet, v model.WaterLog) graphql.Marshaler {
-	return ec._WaterLog(ctx, sel, &v)
-}
-
 func (ec *executionContext) marshalNWaterLog2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterLog(ctx context.Context, sel ast.SelectionSet, v *model.WaterLog) graphql.Marshaler {
 	if v == nil {
 		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
@@ -13053,10 +13009,6 @@ func (ec *executionContext) marshalNWaterLog2ᚖgithubᚗcomᚋvertexᚋbffᚋin
 		return graphql.Null
 	}
 	return ec._WaterLog(ctx, sel, v)
-}
-
-func (ec *executionContext) marshalNWaterLogConnection2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterLogConnection(ctx context.Context, sel ast.SelectionSet, v model.WaterLogConnection) graphql.Marshaler {
-	return ec._WaterLogConnection(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalNWaterLogConnection2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterLogConnection(ctx context.Context, sel ast.SelectionSet, v *model.WaterLogConnection) graphql.Marshaler {
@@ -13098,10 +13050,6 @@ func (ec *executionContext) marshalNWaterLogEdge2ᚖgithubᚗcomᚋvertexᚋbff�
 func (ec *executionContext) unmarshalNWaterLogInput2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterLogInput(ctx context.Context, v any) (model.WaterLogInput, error) {
 	res, err := ec.unmarshalInputWaterLogInput(ctx, v)
 	return res, graphql.ErrorOnPath(ctx, err)
-}
-
-func (ec *executionContext) marshalNWaterSummary2githubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterSummary(ctx context.Context, sel ast.SelectionSet, v model.WaterSummary) graphql.Marshaler {
-	return ec._WaterSummary(ctx, sel, &v)
 }
 
 func (ec *executionContext) marshalNWaterSummary2ᚖgithubᚗcomᚋvertexᚋbffᚋinternalᚋgraphᚋmodelᚐWaterSummary(ctx context.Context, sel ast.SelectionSet, v *model.WaterSummary) graphql.Marshaler {
