@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/vektah/gqlparser/v2/gqlerror"
+	"github.com/vertex/bff/internal/adapter"
 	"github.com/vertex/bff/internal/ai"
-	"github.com/vertex/bff/internal/client"
 	"github.com/vertex/bff/internal/graph/model"
 	"github.com/vertex/bff/internal/loader"
 )
@@ -106,7 +106,7 @@ func (r *adminQueryResolver) Users(ctx context.Context, obj *model.AdminQuery, f
 	if end > total {
 		end = total
 	}
-	var page []client.User
+	var page []adapter.User
 	if offset < total {
 		page = users[offset:end]
 	}
@@ -140,7 +140,7 @@ func (r *adminQueryResolver) Pets(ctx context.Context, obj *model.AdminQuery, fi
 	if end > total {
 		end = total
 	}
-	var page []client.Pet
+	var page []adapter.Pet
 	if offset < total {
 		page = pets[offset:end]
 	}
@@ -165,7 +165,7 @@ func (r *adminQueryResolver) Events(ctx context.Context, obj *model.AdminQuery, 
 	}
 	size := pageSize(first)
 
-	f := client.EventFilter{Limit: size, Offset: offset}
+	f := adapter.EventFilter{Limit: size, Offset: offset}
 	if entityType != nil {
 		f.EntityType = *entityType
 	}
@@ -550,7 +550,7 @@ func (r *queryResolver) Viewer(ctx context.Context) (*model.Viewer, error) {
 func (r *queryResolver) Pet(ctx context.Context, id string) (*model.Pet, error) {
 	p, err := r.PetSvc.GetPet(ctx, id)
 	if err != nil {
-		var ce *client.Error
+		var ce *adapter.Error
 		if asErr(err, &ce) && (ce.Status == 404 || ce.Status == 403) {
 			// schema ประกาศ pet เป็น nullable ไว้แล้ว การคืน null
 			// ไม่บอกผู้เรียกว่าสัตว์เลี้ยงตัวนี้มีอยู่จริงแต่ไม่มีสิทธิ์ดู

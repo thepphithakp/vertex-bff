@@ -1,5 +1,5 @@
 # Build Stage
-FROM golang:alpine AS builder
+FROM golang:1.26.9-alpine AS builder
 
 # Install git. Git is required for fetching the dependencies.
 RUN apk update && apk add --no-cache git ca-certificates tzdata

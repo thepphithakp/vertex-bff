@@ -1,9 +1,9 @@
-// Package client เรียก REST ของ service ข้างใน
+// Package adapter เรียก REST ของ service ข้างใน
 //
 // หลักที่ห้ามละเมิด: ส่ง JWT ของผู้เรียกต่อไปให้ service ปลายทางเสมอ
 // ไม่ให้ BFF ใช้สิทธิ์ของตัวเอง มิฉะนั้น BFF จะกลายเป็นช่องข้ามสิทธิ์
 // การตรวจสิทธิ์จริงยังอยู่ที่ชั้น service ตามที่ pet-service ตั้งใจไว้
-package client
+package adapter
 
 import (
 	"bytes"

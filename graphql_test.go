@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vertex/bff/internal/client"
+	"github.com/vertex/bff/internal/adapter"
 	"github.com/vertex/bff/internal/config"
 	"github.com/vertex/bff/internal/graph"
 )
@@ -119,9 +119,9 @@ func newTestServer(t *testing.T, f *fakeUpstream) http.Handler {
 
 func newTestServerWith(t *testing.T, f *fakeUpstream, cfg config.Config) http.Handler {
 	t.Helper()
-	pets := client.NewPetClient(f.srv.URL, cfg.UpstreamTimeout)
-	auth := client.NewAuthClient(f.srv.URL, cfg.UpstreamTimeout)
-	events := client.NewEventClient(f.srv.URL, cfg.UpstreamTimeout)
+	pets := adapter.NewPetClient(f.srv.URL, cfg.UpstreamTimeout)
+	auth := adapter.NewAuthClient(f.srv.URL, cfg.UpstreamTimeout)
+	events := adapter.NewEventClient(f.srv.URL, cfg.UpstreamTimeout)
 
 	r := &graph.Resolver{PetSvc: pets, AuthSvc: auth, EventSvc: events, Cfg: cfg}
 	return withRequestContext(newGraphQLServer(r, cfg), pets, auth)

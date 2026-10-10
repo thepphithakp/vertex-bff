@@ -17,43 +17,43 @@ import (
 	"context"
 	"sync"
 
-	"github.com/vertex/bff/internal/client"
+	"github.com/vertex/bff/internal/adapter"
 )
 
 type ctxKey struct{}
 
 type Loaders struct {
-	auth *client.AuthClient
-	pet  *client.PetClient
+	auth *adapter.AuthClient
+	pet  *adapter.PetClient
 
 	usersOnce sync.Once
-	users     map[string]client.User
+	users     map[string]adapter.User
 	usersErr  error
 
 	petsOnce sync.Once
-	pets     map[string]client.Pet
+	pets     map[string]adapter.Pet
 	petsErr  error
 
 	meOnce sync.Once
-	me     *client.Me
+	me     *adapter.Me
 	meErr  error
 
 	srcMu   sync.RWMutex
-	srcPets map[string]client.Pet
+	srcPets map[string]adapter.Pet
 }
 
 // Me คือผู้ใช้ที่ถือ token ของ request นี้
 //
 // ดึงจาก /auth/me แทนการแกะ JWT เอง เพราะ BFF ไม่ควรตีความ token
 // การตรวจ token เป็นหน้าที่ของ service ปลายทาง ที่นี่แค่ถามว่า "ฉันคือใคร"
-func (l *Loaders) Me(ctx context.Context) (*client.Me, error) {
+func (l *Loaders) Me(ctx context.Context) (*adapter.Me, error) {
 	l.meOnce.Do(func() {
 		l.me, l.meErr = l.auth.Me(ctx)
 	})
 	return l.me, l.meErr
 }
 
-func New(auth *client.AuthClient, pet *client.PetClient) *Loaders {
+func New(auth *adapter.AuthClient, pet *adapter.PetClient) *Loaders {
 	return &Loaders{auth: auth, pet: pet}
 }
 
@@ -73,16 +73,16 @@ func From(ctx context.Context) *Loaders {
 //
 // คืน user ที่มีแต่ id ถ้าหาไม่เจอหรือไม่มีสิทธิ์ดู แทนการคืน error
 // เพราะการที่แสดงชื่อผู้ดูแลไม่ได้ ไม่ควรทำให้ทั้งหน้าจอพัง
-func (l *Loaders) User(ctx context.Context, id string) client.User {
+func (l *Loaders) User(ctx context.Context, id string) adapter.User {
 	l.usersOnce.Do(func() {
 		users, err := l.auth.AdminListUsers(ctx, "")
 		if err != nil {
 			// เก็บ error ไว้ดูได้ แต่ไม่ทำให้ resolver ล้ม
 			l.usersErr = err
-			l.users = map[string]client.User{}
+			l.users = map[string]adapter.User{}
 			return
 		}
-		m := make(map[string]client.User, len(users))
+		m := make(map[string]adapter.User, len(users))
 		for _, u := range users {
 			m[u.ID] = u
 		}
@@ -92,7 +92,7 @@ func (l *Loaders) User(ctx context.Context, id string) client.User {
 	if u, ok := l.users[id]; ok {
 		return u
 	}
-	return client.User{ID: id}
+	return adapter.User{ID: id}
 }
 
 // UsersErr บอกว่าการโหลดรายชื่อผู้ใช้ล้มเหลวหรือไม่
@@ -103,15 +103,15 @@ func (l *Loaders) UsersErr() error { return l.usersErr }
 //
 // ใช้เส้น admin เพราะ event log เปิดให้เฉพาะ SUPER_ADMIN อยู่แล้ว
 // ผู้เรียกที่มาถึงตรงนี้จึงมีสิทธิ์เห็นสัตว์เลี้ยงทุกตัวแน่นอน
-func (l *Loaders) Pet(ctx context.Context, id string) (client.Pet, bool) {
+func (l *Loaders) Pet(ctx context.Context, id string) (adapter.Pet, bool) {
 	l.petsOnce.Do(func() {
 		pets, err := l.pet.AdminListPets(ctx)
 		if err != nil {
 			l.petsErr = err
-			l.pets = map[string]client.Pet{}
+			l.pets = map[string]adapter.Pet{}
 			return
 		}
-		m := make(map[string]client.Pet, len(pets))
+		m := make(map[string]adapter.Pet, len(pets))
 		for _, p := range pets {
 			m[p.ID] = p
 		}
@@ -135,17 +135,17 @@ func (l *Loaders) PetsErr() error { return l.petsErr }
 // การจำไว้ตอนแปลงครั้งแรกทำให้ไม่ต้องยิงถามสัตว์เลี้ยงตัวเดิมซ้ำ
 // ซึ่งจะเป็น N+1 รอบใหม่ที่ย้ายมาอยู่ฝั่ง server แทน
 
-func (l *Loaders) RememberPet(p client.Pet) {
+func (l *Loaders) RememberPet(p adapter.Pet) {
 	l.srcMu.Lock()
 	defer l.srcMu.Unlock()
 	if l.srcPets == nil {
-		l.srcPets = map[string]client.Pet{}
+		l.srcPets = map[string]adapter.Pet{}
 	}
 	l.srcPets[p.ID] = p
 }
 
 // SourcePet คืน DTO ที่จำไว้ ถ้ายังไม่มีจะไปดึงมาแล้วจำไว้ให้
-func (l *Loaders) SourcePet(ctx context.Context, id string) (client.Pet, error) {
+func (l *Loaders) SourcePet(ctx context.Context, id string) (adapter.Pet, error) {
 	l.srcMu.RLock()
 	p, ok := l.srcPets[id]
 	l.srcMu.RUnlock()
@@ -155,7 +155,7 @@ func (l *Loaders) SourcePet(ctx context.Context, id string) (client.Pet, error) 
 
 	fetched, err := l.pet.GetPet(ctx, id)
 	if err != nil {
-		return client.Pet{}, err
+		return adapter.Pet{}, err
 	}
 	l.RememberPet(*fetched)
 	return *fetched, nil

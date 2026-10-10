@@ -3,12 +3,11 @@ package graph
 import (
 	"encoding/base64"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/vertex/bff/internal/client"
+	"github.com/vertex/bff/internal/adapter"
 	"github.com/vertex/bff/internal/graph/model"
 )
 
@@ -16,7 +15,7 @@ import (
 // แปลง DTO ของ REST เป็น model ของ GraphQL
 // -----------------------------------------------------------------------------
 
-func toPet(p client.Pet) *model.Pet {
+func toPet(p adapter.Pet) *model.Pet {
 	return &model.Pet{
 		ID:               p.ID,
 		Name:             p.Name,
@@ -37,7 +36,7 @@ func toPet(p client.Pet) *model.Pet {
 	}
 }
 
-func toCaregiver(c client.Caregiver) *model.PetCaregiver {
+func toCaregiver(c adapter.Caregiver) *model.PetCaregiver {
 	perms := make([]*model.PetPermission, 0, len(c.Permissions))
 	for _, p := range c.Permissions {
 		perms = append(perms, &model.PetPermission{
@@ -53,7 +52,7 @@ func toCaregiver(c client.Caregiver) *model.PetCaregiver {
 	}
 }
 
-func toUser(u client.User) *model.User {
+func toUser(u adapter.User) *model.User {
 	return &model.User{
 		ID:            u.ID,
 		Email:         u.Email,
@@ -77,21 +76,21 @@ func toRoles(codes []string) []model.Role {
 	return out
 }
 
-func toLitterLog(l client.LitterLog) *model.LitterLog {
+func toLitterLog(l adapter.LitterLog) *model.LitterLog {
 	return &model.LitterLog{
 		ID: l.ID, PetID: l.PetID, Date: l.Date, Type: l.Type, Amount: l.Amount,
 		CreatedByUsername: l.CreatedByUsername, CreatedAt: l.CreatedAt,
 	}
 }
 
-func toWaterLog(l client.WaterLog) *model.WaterLog {
+func toWaterLog(l adapter.WaterLog) *model.WaterLog {
 	return &model.WaterLog{
 		ID: l.ID, PetID: l.PetID, Date: l.Date, Amount: l.Amount,
 		CreatedByUsername: l.CreatedByUsername, CreatedAt: l.CreatedAt,
 	}
 }
 
-func toEvent(e client.Event) *model.Event {
+func toEvent(e adapter.Event) *model.Event {
 	ev := &model.Event{
 		ID: e.ID, Timestamp: e.Timestamp, EventType: e.EventType, Action: e.Action,
 	}
@@ -113,7 +112,7 @@ func toEvent(e client.Event) *model.Event {
 	return ev
 }
 
-func toMasterDataItem(m client.MasterDataItem) *model.MasterDataItem {
+func toMasterDataItem(m adapter.MasterDataItem) *model.MasterDataItem {
 	return &model.MasterDataItem{
 		Code: m.Code, NameEn: m.NameEn, NameTh: m.NameTh, Label: m.Label,
 		SpeciesCode: m.SpeciesCode, SortOrder: m.SortOrder, IsActive: m.IsActive,
@@ -191,7 +190,7 @@ const (
 //	การบังคับจริงอยู่ที่ชั้น service ของ pet-service เสมอ ถ้าใครยิง mutation
 //	ตรงๆ โดยไม่ผ่านหน้าจอ ก็จะโดนปฏิเสธที่นั่นอยู่ดี
 //	ห้ามย้ายการตัดสินใจเรื่องสิทธิ์มาไว้ที่นี่แล้วเอาออกจาก service
-func viewerPermissions(pet client.Pet, viewerID string, roles []string) *model.PetViewerPermissions {
+func viewerPermissions(pet adapter.Pet, viewerID string, roles []string) *model.PetViewerPermissions {
 	isOwner := strings.EqualFold(pet.OwnerID, viewerID)
 	isAdmin := hasRole(roles, "SUPER_ADMIN") || hasRole(roles, "PET_ADMIN")
 
@@ -224,121 +223,6 @@ func hasRole(roles []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// -----------------------------------------------------------------------------
-// สรุปรายวัน
-// -----------------------------------------------------------------------------
-
-// dayKey ตัดเวลาออกให้เหลือแค่วัน ใน timezone ที่กำหนด ใช้เป็น key ของ bucket
-//
-// ต้องแปลง location ก่อนเสมอ ห้ามใช้ t.Location() ของแต่ละค่า
-//
-// time.Time ที่เอาไปเป็น key ของ map จะถือว่าเท่ากันก็ต่อเมื่อทั้งเวลาและ
-// location ตรงกัน วันที่ 20 ส.ค. เที่ยงคืน UTC กับวันที่ 20 ส.ค. เที่ยงคืน +07:00
-// เป็นคนละ key แม้จะเป็น "วันเดียวกัน" ในสายตาผู้ใช้
-//
-// log ที่ parse มาจาก JSON เป็น UTC ส่วน from มาพร้อม offset ของเครื่องผู้เรียก
-// ตอนที่เขียนครั้งแรกใช้ t.Location() ทั้งสองฝั่ง ผลคือ key คนละชุดกันสนิท
-// bucket รายวันจึงเป็น 0 ทั้งหมด ทั้งที่ยอดรวมกับค่าเฉลี่ยถูกต้อง
-// (หน้า Analytics ของ iOS ขึ้นตัวเลขถูกแต่กราฟว่างเปล่า — VT-102)
-func dayKey(t time.Time, loc *time.Location) time.Time {
-	t = t.In(loc)
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
-}
-
-// eachDay ไล่ทุกวันตั้งแต่ from ถึง to
-//
-// นับวันตาม timezone ของ from เพราะนั่นคือ "วัน" ในปฏิทินของผู้ใช้ที่ถาม
-// ต้องเติมวันที่ไม่มีข้อมูลเป็น 0 ด้วย ไม่งั้นกราฟจะขาดช่วงและอ่านผิด
-func eachDay(from, to time.Time, fn func(time.Time)) {
-	loc := from.Location()
-	for d := dayKey(from, loc); !d.After(dayKey(to, loc)); d = d.AddDate(0, 0, 1) {
-		fn(d)
-	}
-}
-
-func daysBetween(from, to time.Time) float64 {
-	n := 0
-	eachDay(from, to, func(time.Time) { n++ })
-	if n == 0 {
-		return 1
-	}
-	return float64(n)
-}
-
-func buildLitterSummary(logs []client.LitterLog, from, to time.Time) *model.LitterSummary {
-	loc := from.Location()
-	poop := map[time.Time]int{}
-	pee := map[time.Time]int{}
-	totalPoop, totalPee := 0, 0
-
-	for _, l := range logs {
-		if !l.IsActive {
-			continue
-		}
-		k := dayKey(l.Date, loc)
-		switch strings.ToLower(l.Type) {
-		case "poop":
-			poop[k] += l.Amount
-			totalPoop += l.Amount
-		case "pee":
-			pee[k] += l.Amount
-			totalPee += l.Amount
-		}
-	}
-
-	var daily []*model.LitterDailyBucket
-	eachDay(from, to, func(d time.Time) {
-		daily = append(daily, &model.LitterDailyBucket{Date: d, Poop: poop[d], Pee: pee[d]})
-	})
-	sort.Slice(daily, func(i, j int) bool { return daily[i].Date.Before(daily[j].Date) })
-
-	n := daysBetween(from, to)
-	return &model.LitterSummary{
-		From: from, To: to,
-		TotalPoop: totalPoop, TotalPee: totalPee,
-		AvgPoopPerDay: float64(totalPoop) / n,
-		AvgPeePerDay:  float64(totalPee) / n,
-		Daily:         daily,
-	}
-}
-
-// waterTargetMlPerKg คือเกณฑ์ที่ client ใช้อยู่เดิม (50 ml ต่อกิโลกรัมต่อวัน)
-const waterTargetMlPerKg = 50.0
-
-func buildWaterSummary(logs []client.WaterLog, from, to time.Time, weightKg *float64) *model.WaterSummary {
-	loc := from.Location()
-	ml := map[time.Time]int{}
-	total := 0
-	for _, l := range logs {
-		if !l.IsActive {
-			continue
-		}
-		ml[dayKey(l.Date, loc)] += l.Amount
-		total += l.Amount
-	}
-
-	var daily []*model.WaterDailyBucket
-	eachDay(from, to, func(d time.Time) {
-		daily = append(daily, &model.WaterDailyBucket{Date: d, Ml: ml[d]})
-	})
-	sort.Slice(daily, func(i, j int) bool { return daily[i].Date.Before(daily[j].Date) })
-
-	s := &model.WaterSummary{
-		From: from, To: to,
-		TotalMl:     total,
-		AvgMlPerDay: float64(total) / daysBetween(from, to),
-		Daily:       daily,
-	}
-	// เป้าหมายคำนวณได้ต่อเมื่อรู้น้ำหนักจริง
-	// client เดิมเดาเป็น 4 กก. เมื่อไม่รู้ แล้วแสดงเป้าหมายที่ไม่จริง
-	// การคืน null บอกตรงๆ ว่าไม่รู้ ดีกว่าแสดงตัวเลขที่ผิด
-	if weightKg != nil && *weightKg > 0 {
-		t := int(*weightKg * waterTargetMlPerKg)
-		s.DailyTargetMl = &t
-	}
-	return s
 }
 
 // -----------------------------------------------------------------------------

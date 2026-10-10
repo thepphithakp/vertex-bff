@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vertex/bff/internal/client"
+	"github.com/vertex/bff/internal/adapter"
 )
 
 // bangkok คือ timezone ที่ iOS ส่งมาจริง (+07:00)
@@ -30,7 +30,7 @@ func TestDailyBucketsUseCallerTimezone(t *testing.T) {
 	from := time.Date(2026, 8, 20, 0, 0, 0, 0, bangkok)
 	to := time.Date(2026, 8, 21, 23, 59, 0, 0, bangkok)
 
-	logs := []client.LitterLog{
+	logs := []adapter.LitterLog{
 		{Date: morning, Type: "Poop", Amount: 1, IsActive: true},
 		{Date: lateNight, Type: "Pee", Amount: 2, IsActive: true},
 		{Date: crossesMidnight, Type: "Poop", Amount: 5, IsActive: true},
@@ -72,7 +72,7 @@ func TestWaterDailyBucketsUseCallerTimezone(t *testing.T) {
 	from := time.Date(2026, 8, 20, 0, 0, 0, 0, bangkok)
 	to := time.Date(2026, 8, 20, 23, 59, 0, 0, bangkok)
 
-	logs := []client.WaterLog{
+	logs := []adapter.WaterLog{
 		// 09:30 ไทย
 		{Date: time.Date(2026, 8, 20, 2, 30, 0, 0, time.UTC), Amount: 60, IsActive: true},
 		// 22:00 ไทย — ยังวันเดียวกันสำหรับผู้ใช้
@@ -100,7 +100,7 @@ func TestBucketsStillWorkInUTC(t *testing.T) {
 	from := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 8, 20, 23, 59, 0, 0, time.UTC)
 
-	logs := []client.LitterLog{
+	logs := []adapter.LitterLog{
 		{Date: time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC), Type: "Poop", Amount: 1, IsActive: true},
 	}
 

@@ -21,8 +21,8 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 
+	"github.com/vertex/bff/internal/adapter"
 	"github.com/vertex/bff/internal/ai"
-	"github.com/vertex/bff/internal/client"
 	"github.com/vertex/bff/internal/config"
 	"github.com/vertex/bff/internal/graph"
 	"github.com/vertex/bff/internal/loader"
@@ -62,9 +62,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	petSvc := client.NewPetClient(cfg.PetServiceURL, cfg.UpstreamTimeout)
-	authSvc := client.NewAuthClient(cfg.AuthServiceURL, cfg.UpstreamTimeout)
-	eventSvc := client.NewEventClient(cfg.EventServiceURL, cfg.UpstreamTimeout)
+	petSvc := adapter.NewPetClient(cfg.PetServiceURL, cfg.UpstreamTimeout)
+	authSvc := adapter.NewAuthClient(cfg.AuthServiceURL, cfg.UpstreamTimeout)
+	eventSvc := adapter.NewEventClient(cfg.EventServiceURL, cfg.UpstreamTimeout)
 
 	// ไม่ตั้ง GEMINI_API_KEY = ไม่มี AI service เลย ฟิลด์ waterInsight จะคืน null
 	// แล้วแอปใช้ข้อความสำรองของตัวเอง — ตั้งใจให้ start ได้โดยไม่ต้องมี key
@@ -198,7 +198,7 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 				"depth", depth,
 				"complexity", cost,
 				"latency", time.Since(start),
-				"request_id", client.RequestIDFrom(ctx),
+				"request_id", adapter.RequestIDFrom(ctx),
 				"errors", len(r.Errors),
 			}
 			if rejected != "" {
@@ -270,7 +270,7 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 		if _, ok := err.Extensions["code"]; !ok {
 			err.Extensions["code"] = "INTERNAL"
 		}
-		if rid := client.RequestIDFrom(ctx); rid != "" {
+		if rid := adapter.RequestIDFrom(ctx); rid != "" {
 			err.Extensions["requestId"] = rid
 		}
 		return err
@@ -283,17 +283,17 @@ func newGraphQLServer(resolver *graph.Resolver, cfg config.Config) *handler.Serv
 //
 // สำคัญที่สุดคือ JWT — ส่งต่อไปให้ service ปลายทางเสมอ ไม่ให้ BFF ใช้สิทธิ์ตัวเอง
 // การตรวจ token จริงยังเป็นหน้าที่ของ service ปลายทาง ที่นี่แค่ส่งผ่าน
-func withRequestContext(next http.Handler, pets *client.PetClient, auth *client.AuthClient) http.Handler {
+func withRequestContext(next http.Handler, pets *adapter.PetClient, auth *adapter.AuthClient) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 
 		if h := r.Header.Get("Authorization"); h != "" {
 			if len(h) > 7 && strings.EqualFold(h[:7], "bearer ") {
-				ctx = client.WithToken(ctx, h[7:])
+				ctx = adapter.WithToken(ctx, h[7:])
 			}
 		}
 		if rid := r.Header.Get(headerRequestID); rid != "" {
-			ctx = client.WithRequestID(ctx, rid)
+			ctx = adapter.WithRequestID(ctx, rid)
 		}
 
 		// loader ใหม่ต่อหนึ่ง request — ห้ามใช้ร่วมข้าม request

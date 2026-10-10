@@ -3,8 +3,8 @@ package graph
 // ไฟล์นี้ gqlgen ไม่ generate ทับ — ใช้ผูก dependency เข้า resolver
 
 import (
+	"github.com/vertex/bff/internal/adapter"
 	"github.com/vertex/bff/internal/ai"
-	"github.com/vertex/bff/internal/client"
 	"github.com/vertex/bff/internal/config"
 )
 
@@ -14,9 +14,9 @@ import (
 // ชื่อ Pets / Events ตาม field ของ schema อยู่แล้ว ถ้าตั้งชื่อ field ซ้ำ
 // method จะบัง field จนเรียกไม่ถึง
 type Resolver struct {
-	PetSvc   *client.PetClient
-	AuthSvc  *client.AuthClient
-	EventSvc *client.EventClient
+	PetSvc   *adapter.PetClient
+	AuthSvc  *adapter.AuthClient
+	EventSvc *adapter.EventClient
 	Cfg      config.Config
 
 	// AI เป็น nil ได้ — environment ที่ไม่ได้ตั้ง key จะไม่มีตัวนี้

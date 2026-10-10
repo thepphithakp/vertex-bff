@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/vektah/gqlparser/v2/gqlerror"
-	"github.com/vertex/bff/internal/client"
+	"github.com/vertex/bff/internal/adapter"
 	"github.com/vertex/bff/internal/graph/model"
 	"github.com/vertex/bff/internal/loader"
 )
@@ -19,7 +19,7 @@ import (
 // เพื่อให้ client แยกกรณีได้โดยไม่ต้องจับคู่ข้อความภาษาไทย ซึ่งเปลี่ยนได้ตลอด
 
 func gqlErr(err error) error {
-	var ce *client.Error
+	var ce *adapter.Error
 	if errors.As(err, &ce) {
 		ext := map[string]any{"code": ce.Code}
 		if ce.RequestID != "" {
@@ -42,7 +42,7 @@ func internalErr(msg string) error {
 	return &gqlerror.Error{Message: msg, Extensions: map[string]any{"code": "INTERNAL"}}
 }
 
-func asErr(err error, target **client.Error) bool {
+func asErr(err error, target **adapter.Error) bool {
 	return errors.As(err, target)
 }
 
@@ -54,19 +54,19 @@ func asErr(err error, target **client.Error) bool {
 //
 // ถ้าไม่จำไว้ resolver ของ owner / caregivers / viewerPermissions
 // จะต้องยิงถามสัตว์เลี้ยงตัวเดิมซ้ำอีกครั้งละหนึ่ง request
-func (r *Resolver) petModel(ctx context.Context, p client.Pet) *model.Pet {
+func (r *Resolver) petModel(ctx context.Context, p adapter.Pet) *model.Pet {
 	if l := loader.From(ctx); l != nil {
 		l.RememberPet(p)
 	}
 	return toPet(p)
 }
 
-func (r *Resolver) source(ctx context.Context, petID string) (client.Pet, error) {
+func (r *Resolver) source(ctx context.Context, petID string) (adapter.Pet, error) {
 	l := loader.From(ctx)
 	if l == nil {
 		p, err := r.PetSvc.GetPet(ctx, petID)
 		if err != nil {
-			return client.Pet{}, err
+			return adapter.Pet{}, err
 		}
 		return *p, nil
 	}
@@ -76,7 +76,7 @@ func (r *Resolver) source(ctx context.Context, petID string) (client.Pet, error)
 // caregiverWithUser ใส่ id ของผู้ใช้ไว้ก่อน ให้ resolver ของ user ไปเติมชื่อทีหลัง
 //
 // ทำแบบนี้เพื่อให้ query ที่ขอแค่ permissions ไม่ต้องไปแตะ auth-service เลย
-func caregiverWithUser(c client.Caregiver) *model.PetCaregiver {
+func caregiverWithUser(c adapter.Caregiver) *model.PetCaregiver {
 	m := toCaregiver(c)
 	m.User = &model.User{ID: c.UserID}
 	return m
@@ -136,7 +136,7 @@ func inRange(t time.Time, from, to *time.Time) bool {
 	return true
 }
 
-func filterLitterByRange(logs []client.LitterLog, from, to *time.Time) []client.LitterLog {
+func filterLitterByRange(logs []adapter.LitterLog, from, to *time.Time) []adapter.LitterLog {
 	if from == nil && to == nil {
 		return logs
 	}
@@ -149,7 +149,7 @@ func filterLitterByRange(logs []client.LitterLog, from, to *time.Time) []client.
 	return out
 }
 
-func filterWaterByRange(logs []client.WaterLog, from, to *time.Time) []client.WaterLog {
+func filterWaterByRange(logs []adapter.WaterLog, from, to *time.Time) []adapter.WaterLog {
 	if from == nil && to == nil {
 		return logs
 	}
@@ -172,8 +172,8 @@ const (
 	summaryPageSize = 200
 )
 
-func (r *Resolver) allLitterInRange(ctx context.Context, petID string, from, to time.Time) ([]client.LitterLog, error) {
-	var all []client.LitterLog
+func (r *Resolver) allLitterInRange(ctx context.Context, petID string, from, to time.Time) ([]adapter.LitterLog, error) {
+	var all []adapter.LitterLog
 	var cursor *string
 	for i := 0; i < summaryMaxPages; i++ {
 		logs, next, hasMore, err := r.PetSvc.ListLitterLogs(ctx, petID, summaryPageSize, cursor)
@@ -200,8 +200,8 @@ func (r *Resolver) allLitterInRange(ctx context.Context, petID string, from, to 
 	return all, nil
 }
 
-func (r *Resolver) allWaterInRange(ctx context.Context, petID string, from, to time.Time) ([]client.WaterLog, error) {
-	var all []client.WaterLog
+func (r *Resolver) allWaterInRange(ctx context.Context, petID string, from, to time.Time) ([]adapter.WaterLog, error) {
+	var all []adapter.WaterLog
 	var cursor *string
 	for i := 0; i < summaryMaxPages; i++ {
 		logs, next, hasMore, err := r.PetSvc.ListWaterLogs(ctx, petID, summaryPageSize, cursor)
